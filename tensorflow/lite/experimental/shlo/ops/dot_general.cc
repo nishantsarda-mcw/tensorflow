@@ -26,12 +26,12 @@ limitations under the License.
 
 namespace shlo_ref {
 
-absl::Status CheckParameters(const Tensor& lhs, const Tensor& rhs,
-                             const Tensor& lhs_batching_dimensions,
-                             const Tensor& rhs_batching_dimensions,
-                             const Tensor& lhs_contracting_dimensions,
-                             const Tensor& rhs_contracting_dimensions,
-                             Tensor& output, precision_types precision_config) {
+absl::Status CheckParameters(
+    const Tensor& lhs, const Tensor& rhs, const Tensor& lhs_batching_dimensions,
+    const Tensor& rhs_batching_dimensions,
+    const Tensor& lhs_contracting_dimensions,
+    const Tensor& rhs_contracting_dimensions, Tensor& output,
+    absl::InlinedVector<PrecisionTypes, 2>& precision_configs) {
   const int64_t* lhsb = lhs_batching_dimensions.GetDataAs<DataType::kSI64>();
   const int64_t* rhsb = rhs_batching_dimensions.GetDataAs<DataType::kSI64>();
   const int64_t* lhsc = lhs_contracting_dimensions.GetDataAs<DataType::kSI64>();
@@ -47,10 +47,16 @@ absl::Status CheckParameters(const Tensor& lhs, const Tensor& rhs,
   absl::InlinedVector<size_t, 6> rhs_result_dims;
   absl::InlinedVector<size_t, 6> output_shape_check;
 
-  if (precision_config != precision_types::DEFAULT)
+  if (precision_configs.size() != 2) {
+    return absl::FailedPreconditionError(
+        "stablehlo.dot_general: Size of precision_config must be two.");
+  }
+  if (precision_configs[0] != PrecisionTypes::DEFAULT &&
+      precision_configs[1] != PrecisionTypes::DEFAULT) {
     return absl::UnimplementedError(
         "stablehlo.dot_general: Currently the precision_config supports "
         "DEFAULT configuration only.");
+  }
   if (lhsb_size != rhsb_size) {
     return absl::FailedPreconditionError(
         "stablehlo.dot_general: Size of lhs_batching_dimensions and "
@@ -215,7 +221,7 @@ absl::Status CheckParameters(const Tensor& lhs, const Tensor& rhs,
           [](const auto& zero_points) -> bool {
         return std::visit(
             [](const auto& v) {
-              return std::all_of(v.begin(), v.end(), [](auto value) {
+              return std::all_of(v.begin(), v.end(), [](const auto value) {
                 return value == static_cast<decltype(value)>(0);
               });
             },
@@ -256,7 +262,7 @@ absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
   const StorageT* lhs_data = lhs.GetDataAs<storage_type>();
   const StorageT* rhs_data = rhs.GetDataAs<storage_type>();
   StorageT* output_data = output.GetDataAs<storage_type>();
-  const size_t lhs_size = lhs.NumElements();
+  const DimensionSize lhs_size = lhs.NumElements();
   const DimensionSize rhs_size = rhs.NumElements();
   const DimensionSize output_size = output.NumElements();
   const size_t lhs_rank = lhs.Rank();
@@ -357,20 +363,17 @@ void DequantizeOpQuantizePerTensor(DotGeneralOp& op, const Tensor& lhs,
   using StorageT = StorageType<storage_type>;
   using ExpressedT = StorageType<expressed_type>;
 
-  std::vector<typename Storage<expressed_type>::Type> lhs_values(
-      lhs.NumElements());
+  std::vector<ExpressedT> lhs_values(lhs.NumElements());
   const Shape lhs_shape = lhs.shape();
   Tensor lhs_dequantized{
       .type = TensorType{.shape = lhs_shape, .element_type = expressed_type},
       .data = lhs_values.data()};
-  std::vector<typename Storage<expressed_type>::Type> rhs_values(
-      rhs.NumElements());
+  std::vector<ExpressedT> rhs_values(rhs.NumElements());
   const Shape rhs_shape = rhs.shape();
   Tensor rhs_dequantized{
       .type = TensorType{.shape = rhs_shape, .element_type = expressed_type},
       .data = rhs_values.data()};
-  std::vector<typename Storage<expressed_type>::Type> output_values(
-      output.NumElements());
+  std::vector<ExpressedT> output_values(output.NumElements());
   const Shape result_shape = output.shape();
   Tensor output_dequantized{
       .type = TensorType{.shape = result_shape, .element_type = expressed_type},
@@ -497,20 +500,17 @@ void DequantizeOpQuantizePerAxis(DotGeneralOp& op, const Tensor& lhs,
   using StorageT = StorageType<storage_type>;
   using ExpressedT = StorageType<expressed_type>;
 
-  std::vector<typename Storage<expressed_type>::Type> lhs_values(
-      lhs.NumElements());
+  std::vector<ExpressedT> lhs_values(lhs.NumElements());
   const Shape lhs_shape = lhs.shape();
   Tensor lhs_dequantized{
       .type = TensorType{.shape = lhs_shape, .element_type = expressed_type},
       .data = lhs_values.data()};
-  std::vector<typename Storage<expressed_type>::Type> rhs_values(
-      rhs.NumElements());
+  std::vector<ExpressedT> rhs_values(rhs.NumElements());
   const Shape rhs_shape = rhs.shape();
   Tensor rhs_dequantized{
       .type = TensorType{.shape = rhs_shape, .element_type = expressed_type},
       .data = rhs_values.data()};
-  std::vector<typename Storage<expressed_type>::Type> result_values(
-      result.NumElements());
+  std::vector<ExpressedT> result_values(result.NumElements());
   const Shape result_shape = result.shape();
   Tensor result_dequantized{
       .type = TensorType{.shape = result_shape, .element_type = expressed_type},
@@ -592,7 +592,7 @@ absl::Status Prepare(DotGeneralOp& op, const Tensor& lhs, const Tensor& rhs,
                       op.attributes.rhs_batching_dimensions,
                       op.attributes.lhs_contracting_dimensions,
                       op.attributes.rhs_contracting_dimensions, output,
-                      op.attributes.precision_config));
+                      op.attributes.precision_configs));
 
   const int64_t* lhs_batching_dimensions_data =
       op.attributes.lhs_batching_dimensions.GetDataAs<DataType::kSI64>();

@@ -89,11 +89,14 @@ TYPED_TEST(NonQuantizedBoolDotGeneralTest, BoolTestTypesTensorsWork1) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<StorageT> expected_data = {true, true, true, true, true, true, true,
                                     true, true, true, true, true, true, true,
@@ -139,11 +142,14 @@ TYPED_TEST(NonQuantizedBoolDotGeneralTest, BoolTestTypesTensorsWork2) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<StorageT> expected_data = {true, true, true, true, true, false};
 
@@ -201,11 +207,14 @@ TYPED_TEST(NonQuantizedFloatDotGeneralTest, FloatTestTypesTensorsWork1) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<StorageT> expected_data;
   if (std::is_same<StorageT, float>::value) {
@@ -275,11 +284,14 @@ TYPED_TEST(NonQuantizedFloatDotGeneralTest, FloatTestTypesTensorsWork2) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<StorageT> expected_data;
   if (std::is_same<StorageT, float>::value) {
@@ -343,11 +355,16 @@ TYPED_TEST(NonQuantizedFloatDotGeneralTest, FloatTestTypesTensorsWork3) {
   Tensor output_tensor{
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
+
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
+
   Vector<StorageT> expected_data;
   if (std::is_same<StorageT, float>::value) {
     Vector<float> expected_data_float = {80.2178345, -0.816446066, -41.8026962,
@@ -404,11 +421,16 @@ TYPED_TEST(NonQuantizedFloatDotGeneralTest, FloatTestTypesTensorsWork4) {
   Tensor output_tensor{
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
+
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
+
   Vector<StorageT> expected_data;
   if (std::is_same<StorageT, float>::value) {
     Vector<float> expected_data_float = {-3.46936};
@@ -459,11 +481,14 @@ TYPED_TEST(NonQuantizedIntDotGeneralTest, IntTestTypesTensorsWork1) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<int64_t> expected_data_int{1, 0, 0, 1, 2, 0, 0, 2,
                                     3, 0, 0, 3, 4, 0, 0, 4};
@@ -521,11 +546,16 @@ TYPED_TEST(NonQuantizedIntDotGeneralTest, IntTestTypesTensorsWork2) {
   Tensor output_tensor{
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
+
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
+
   Vector<int64_t> expected_data_int{0,   -4, 12, -8,  10, 0,  -20,
                                     -18, 0,  13, -14, 0,  6,  12,
                                     2,   11, 17, 1,   -6, 11, -4};
@@ -571,11 +601,14 @@ TYPED_TEST(NonQuantizedIntDotGeneralTest, IntTestTypesTensorsWork3) {
       .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<int64_t> expected_data_int{4,  5,  6,  3,  10, 11, 14, 7,
                                     16, 17, 22, 11, 22, 23, 30, 15};
@@ -642,11 +675,14 @@ TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork1) {
                                            .element_type = tensor_type},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<float> expected_data = Vector<float>{44, 4, 40, 8};
   Vector<float> expected_quantized(shape_r.NumElements());
@@ -707,11 +743,14 @@ TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork2) {
                                            .element_type = tensor_type},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<float> expected_data = Vector<float>{2.88, 4.32, 11.531, 7.2};
   Vector<float> expected_quantized(shape_r.NumElements());
@@ -782,11 +821,14 @@ TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork3) {
                                            .element_type = tensor_type},
       .data = output_data.data()};
 
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<float> expected_data =
       Vector<float>{4.417, 8.32, 13.257, 16.64, 22.109, 24.937, 30.953, 33.281};
@@ -856,14 +898,19 @@ TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork4) {
       .type = QuantizedPerAxisTensorType{.shape = shape_r,
                                          .element_type = tensor_type_axis_res},
       .data = output_data.data()};
+
+  absl::InlinedVector<PrecisionTypes, 2> precision_configs = {
+      PrecisionTypes::DEFAULT, PrecisionTypes::DEFAULT};
   auto op = Create(DotGeneralOp::Attributes{
       .lhs_batching_dimensions = lhs_batching_dimensions,
       .rhs_batching_dimensions = rhs_batching_dimensions,
       .lhs_contracting_dimensions = lhs_contracting_dimensions,
-      .rhs_contracting_dimensions = rhs_contracting_dimensions});
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
 
   Vector<float> expected_data = {4.76172, 8.96094, 14.289, 17.921,
                                  23.796,  26.89,   33.34,  35.843};
+
   Vector<float> quantized_data(shape_r.NumElements());
   for (size_t i = 0; i < expected_data.size(); ++i) {
     int quantization_index = i % 2;
@@ -874,6 +921,7 @@ TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork4) {
             static_cast<ExpressedT>(1.0f / scalesv[quantization_index]));
     quantized_data[i] = quantized_value;
   }
+
   ASSERT_OK(Prepare(op, lhs, rhs, output_tensor));
   ASSERT_OK(Evaluate(op, lhs, rhs, output_tensor));
   EXPECT_THAT(output_data, Pointwise(FloatEq(), quantized_data));
