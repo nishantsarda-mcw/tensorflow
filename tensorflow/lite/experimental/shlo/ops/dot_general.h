@@ -21,6 +21,12 @@ limitations under the License.
 
 namespace shlo_ref {
 
+enum class precision_types {
+  DEFAULT,
+  HIGH,
+  HIGHEST,
+};
+
 class DotGeneralOp {
  public:
   struct Attributes {
@@ -28,16 +34,17 @@ class DotGeneralOp {
     Tensor rhs_batching_dimensions;
     Tensor lhs_contracting_dimensions;
     Tensor rhs_contracting_dimensions;
+    precision_types precision_config;
   };
   Attributes attributes;
-  std::vector<size_t> lhs_result_dims;
-  std::vector<size_t> rhs_result_dims;
-  std::vector<size_t> lhs_index;
-  std::vector<size_t> rhs_index;
-  std::vector<size_t> lhs_index_helper;
-  std::vector<size_t> rhs_index_helper;
-  std::vector<size_t> output_index;
-  std::vector<size_t> output_shape;
+  absl::InlinedVector<size_t, 6> lhs_result_dims;
+  absl::InlinedVector<size_t, 6> rhs_result_dims;
+  absl::InlinedVector<size_t, 6> lhs_index;
+  absl::InlinedVector<size_t, 6> rhs_index;
+  absl::InlinedVector<size_t, 6> lhs_index_helper;
+  absl::InlinedVector<size_t, 6> rhs_index_helper;
+  absl::InlinedVector<size_t, 6> output_index;
+  absl::InlinedVector<size_t, 6> output_shape;
 };
 
 DotGeneralOp Create(DotGeneralOp::Attributes attributes);
