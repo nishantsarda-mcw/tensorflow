@@ -30,21 +30,29 @@ enum class PrecisionTypes {
 class DotGeneralOp {
  public:
   struct Attributes {
-    Tensor lhs_batching_dimensions;
-    Tensor rhs_batching_dimensions;
-    Tensor lhs_contracting_dimensions;
-    Tensor rhs_contracting_dimensions;
-    absl::InlinedVector<PrecisionTypes, 2> precision_configs;
+    absl::Span<int64_t> lhs_batching_dimensions;
+    absl::Span<int64_t> rhs_batching_dimensions;
+    absl::Span<int64_t> lhs_contracting_dimensions;
+    absl::Span<int64_t> rhs_contracting_dimensions;
+    std::array<PrecisionTypes, 2> precision_configs;
   };
   Attributes attributes;
+  Tensor lhs_transposed;
+  Tensor rhs_transposed;
+  Tensor lhs_reshaped;
+  Tensor rhs_reshaped;
+  Tensor lhs_dequantized;
+  Tensor rhs_dequantized;
+  Tensor output_dequantized;
   absl::InlinedVector<size_t, 6> lhs_result_dims;
   absl::InlinedVector<size_t, 6> rhs_result_dims;
-  absl::InlinedVector<size_t, 6> lhs_index;
-  absl::InlinedVector<size_t, 6> rhs_index;
-  absl::InlinedVector<size_t, 6> lhs_index_helper;
-  absl::InlinedVector<size_t, 6> rhs_index_helper;
-  absl::InlinedVector<size_t, 6> output_index;
-  absl::InlinedVector<size_t, 6> output_shape;
+  absl::InlinedVector<size_t, 6> lhs_permutations;
+  absl::InlinedVector<size_t, 6> rhs_permutations;
+  std::vector<std::byte> lhs_transposed_data;
+  std::vector<std::byte> rhs_transposed_data;
+  std::vector<std::byte> lhs_dequantized_data;
+  std::vector<std::byte> rhs_dequantized_data;
+  std::vector<std::byte> output_dequantized_data;
 };
 
 DotGeneralOp Create(DotGeneralOp::Attributes attributes);
