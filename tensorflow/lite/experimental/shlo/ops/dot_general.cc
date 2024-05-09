@@ -63,8 +63,8 @@ bool HasUniqueDimension(absl::Span<const Axis> batching_dimensions,
 }
 
 bool HasSameDimensionSize(const Tensor& lhs, const Tensor& rhs,
-                          absl::Span<const Axis>& lhs_dimensions,
-                          absl::Span<const Axis>& rhs_dimensions,
+                          absl::Span<const Axis> lhs_dimensions,
+                          absl::Span<const Axis> rhs_dimensions,
                           const size_t size) {
   for (size_t i = 0; i < size; ++i) {
     if (lhs.shape().Dim(lhs_dimensions[i]) !=
@@ -76,10 +76,10 @@ bool HasSameDimensionSize(const Tensor& lhs, const Tensor& rhs,
 }
 
 absl::InlinedVector<Axis, kMaxNumDimensions> CalculateResultDimensions(
-    size_t rank, absl::Span<const Axis> batching_dimensions,
+    Axis rank, absl::Span<const Axis> batching_dimensions,
     absl::Span<const Axis> contracting_dimensions) {
   absl::InlinedVector<Axis, kMaxNumDimensions> result_dims;
-  for (size_t i = 0; i < rank; ++i) {
+  for (Axis i = 0; i < rank; ++i) {
     if (!ContainsDimension(batching_dimensions, i) &&
         !ContainsDimension(contracting_dimensions, i)) {
       result_dims.push_back(i);
@@ -106,32 +106,25 @@ bool CheckZeroPoints(
       zero_points);
 }
 
-void GenerateIndices(size_t index,
-                     absl::InlinedVector<Axis, kMaxNumDimensions>& output_index,
-                     const Tensor& output, size_t output_rank) {
-  size_t divisor = 1, dim = 0;
-  for (size_t i = 0, j = output_rank - 1; i < output_rank; ++i, --j) {
-    dim = output.shape().Dim(j);
-    output_index[j] = (index / divisor) % dim;
-    divisor *= dim;
-  }
-  return;
-}
-
 bool IncrementIndices(const Tensor& lhs,
                       absl::InlinedVector<Axis, kMaxNumDimensions>& lhs_index,
                       absl::InlinedVector<Axis, kMaxNumDimensions>& rhs_index,
-                      absl::Span<const Axis>& lhs_contracting_dimensions,
-                      absl::Span<const Axis>& rhs_contracting_dimensions,
+                      absl::Span<const Axis> lhs_contracting_dimensions,
+                      absl::Span<const Axis> rhs_contracting_dimensions,
                       const size_t lhsc_size) {
-  if (lhsc_size == 0) return false;
-  for (size_t i = lhsc_size - 1; i >= 0; --i) {
+  if (lhsc_size == 0) {
+    return false;
+  }
+  for (int64_t i = static_cast<int64_t>(lhsc_size) - 1; i >= 0; --i) {
     lhs_index[lhs_contracting_dimensions[i]]++;
     rhs_index[rhs_contracting_dimensions[i]]++;
     if (lhs_index[lhs_contracting_dimensions[i]] <
-        lhs.shape().Dim(lhs_contracting_dimensions[i]))
+        lhs.shape().Dim(lhs_contracting_dimensions[i])) {
       return true;
-    if (i == 0) return false;
+    }
+    if (i == 0) {
+      return false;
+    }
     lhs_index[lhs_contracting_dimensions[i]] = 0;
     rhs_index[rhs_contracting_dimensions[i]] = 0;
   }
@@ -327,10 +320,6 @@ absl::Status PrepareTensors(DotGeneralOp& op, const Tensor& lhs,
   const DimensionSize lhs_size = lhs.NumElements();
   const DimensionSize rhs_size = rhs.NumElements();
   const DimensionSize output_size = output.NumElements();
-  const size_t lhsb_size = op.attributes.lhs_batching_dimensions.size();
-  const size_t rhsb_size = op.attributes.rhs_batching_dimensions.size();
-  const size_t lhsc_size = op.attributes.lhs_contracting_dimensions.size();
-  const size_t rhsc_size = op.attributes.rhs_contracting_dimensions.size();
 
   // quantized tensor prepare
   if (lhs.IsQuantized()) {
@@ -370,45 +359,21 @@ absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
                           absl::Span<const Axis> rhs_contracting_dimensions,
                           Tensor& output) {
   using StorageT = StorageType<storage_type>;
-  const StorageT* lhs_data = lhs.GetDataAs<storage_type>();
-  const StorageT* rhs_data = rhs.GetDataAs<storage_type>();
   StorageT* output_data = output.GetDataAs<storage_type>();
-  const DimensionSize lhs_size = lhs.NumElements();
-  const DimensionSize rhs_size = rhs.NumElements();
   const DimensionSize output_size = output.NumElements();
   const size_t lhs_rank = lhs.Rank();
   const size_t rhs_rank = rhs.Rank();
   const size_t output_rank = output.Rank();
   const size_t lhsb_size = lhs_batching_dimensions.size();
-  const size_t rhsb_size = rhs_batching_dimensions.size();
   const size_t lhsc_size = lhs_contracting_dimensions.size();
-  const size_t rhsc_size = rhs_contracting_dimensions.size();
 
-  absl::InlinedVector<Axis, kMaxNumDimensions> lhs_index;
-  lhs_index.resize(lhs_rank);
-  absl::InlinedVector<Axis, kMaxNumDimensions> rhs_index;
-  rhs_index.resize(rhs_rank);
-  absl::InlinedVector<DimensionSize, kMaxNumDimensions> lhs_index_helper;
-  lhs_index_helper.resize(lhs_rank);
-  absl::InlinedVector<DimensionSize, kMaxNumDimensions> rhs_index_helper;
-  rhs_index_helper.resize(rhs_rank);
-  absl::InlinedVector<Axis, kMaxNumDimensions> output_index;
-  output_index.resize(output_rank);
+  absl::InlinedVector<Axis, kMaxNumDimensions> lhs_index(lhs_rank);
+  absl::InlinedVector<Axis, kMaxNumDimensions> rhs_index(rhs_rank);
+  absl::InlinedVector<Axis, kMaxNumDimensions> output_index(output_rank);
 
-  DimensionSize lhs_dim_accumulator = 1, rhs_dim_accumulator = 1;
-  for (size_t i = 0; i < lhs_rank; ++i) {
-    lhs_dim_accumulator *= lhs.shape().Dim(i);
-    lhs_index_helper[i] = lhs_size / lhs_dim_accumulator;
-  }
-  for (size_t i = 0; i < rhs_rank; ++i) {
-    rhs_dim_accumulator *= rhs.shape().Dim(i);
-    rhs_index_helper[i] = rhs_size / rhs_dim_accumulator;
-  }
-  // This Logic will be replaced with optimized code
   StorageT output_element(0);
-  DimensionSize lhs_element_index = 0, rhs_element_index = 0;
   for (size_t k = 0; k < output_size; ++k, ++output_data) {
-    GenerateIndices(k, output_index, output, output_rank);
+    output.GetNdIndex(k, output_index);
     absl::c_fill(lhs_index, 0);
     absl::c_fill(rhs_index, 0);
 
@@ -423,19 +388,11 @@ absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
     for (size_t i = 0; i < op.rhs_result_dims.size(); ++i, ++result_dim) {
       rhs_index[op.rhs_result_dims[i]] = output_index[result_dim];
     }
+
     output_element = 0;
     while (true) {
-      lhs_element_index = 0;
-      rhs_element_index = 0;
-      for (size_t i = 0; i < lhs_rank; ++i) {
-        lhs_element_index += lhs_index[i] * lhs_index_helper[i];
-      }
-      for (size_t i = 0; i < rhs_rank; ++i) {
-        rhs_element_index += rhs_index[i] * rhs_index_helper[i];
-      }
       output_element +=
-          lhs_data[lhs_element_index] * rhs_data[rhs_element_index];
-
+          lhs.Get<storage_type>(lhs_index) * rhs.Get<storage_type>(rhs_index);
       if (!IncrementIndices(lhs, lhs_index, rhs_index,
                             lhs_contracting_dimensions,
                             rhs_contracting_dimensions, lhsc_size)) {
