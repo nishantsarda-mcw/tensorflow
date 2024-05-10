@@ -61,6 +61,22 @@ DataType Tensor::StorageType() const {
       type);
 }
 
+DataType Tensor::ExpressedType() const {
+  assert(IsQuantized());
+  return std::visit(
+      shlo_ref::Overload(
+          [](const QuantizedPerTensorTensorType& t) {
+            return t.element_type.ExpressedType();
+          },
+          [](const QuantizedPerAxisTensorType& t) {
+            return t.element_type.ExpressedType();
+          },
+          [](const auto& t) -> DataType {
+            ABSL_LOG(FATAL) << "Unsupported tensor type";
+          }),
+      type);
+}
+
 DimensionSize Tensor::NumElements() const { return shape().NumElements(); }
 
 size_t Tensor::SizeInBytes() const {
