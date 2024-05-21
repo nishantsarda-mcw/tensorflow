@@ -61,6 +61,14 @@ DataType Tensor::StorageType() const {
       type);
 }
 
+DataType Tensor::ExpressedType() const {
+  return std::visit(
+      shlo_ref::Overload(
+          [](const TensorType& t) -> DataType { ABSL_CHECK(false); },
+          [](const auto& t) { return t.element_type.ExpressedType(); }),
+      type);
+}
+
 DimensionSize Tensor::NumElements() const { return shape().NumElements(); }
 
 size_t Tensor::SizeInBytes() const {
@@ -115,6 +123,53 @@ TensorElementTypeVariant Tensor::element_type() const {
   return std::visit(
       [](const auto& t) -> TensorElementTypeVariant { return t.element_type; },
       type);
+}
+
+void Tensor::GetNdIndex(
+    DimensionSize index,
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions>& indices) const {
+  DimensionSize divisor = 1;
+  DimensionSize dim = 0;
+  Axis rank = Rank();
+  for (int64_t i = static_cast<int64_t>(rank) - 1; i >= 0; --i) {
+    dim = shape().Dim(i);
+    indices[i] = (index / divisor) % dim;
+    divisor *= dim;
+  }
+  return;
+}
+
+bool Tensor::IsInBounds(absl::Span<const DimensionSize> indices) const {
+  if (indices.size() != Rank()) {
+    return false;
+  }
+  for (Axis dim = 0; dim < Rank(); ++dim) {
+    if (indices[dim] < 0 || indices[dim] >= shape().Dim(dim)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+DimensionSize Tensor::FlattenIndex(
+    absl::Span<const DimensionSize> indices) const {
+  // Incompatible indices and shape check while flattening index.
+  if (!IsInBounds(indices)) {
+    ABSL_CHECK(false);
+  }
+  DimensionSize index = 0;
+  DimensionSize divisor = 1;
+  DimensionSize dim = 0;
+  Axis rank = Rank();
+  if (shape().empty()) {
+    return index;
+  }
+  for (int64_t i = static_cast<int64_t>(rank) - 1; i >= 0; --i) {
+    dim = shape().Dim(i);
+    index += divisor * indices[i];
+    divisor *= dim;
+  }
+  return index;
 }
 
 bool operator==(const TensorType& lhs, const TensorType& rhs) {
