@@ -37,6 +37,12 @@ class DotGeneralOp {
     std::array<PrecisionTypes, 2> precision_configs;
   };
   Attributes attributes;
+  Tensor lhs_dequantized;
+  Tensor rhs_dequantized;
+  Tensor output_dequantized;
+  std::vector<std::byte> lhs_dequantized_data;
+  std::vector<std::byte> rhs_dequantized_data;
+  std::vector<std::byte> output_dequantized_data;
 };
 
 DotGeneralOp Create(DotGeneralOp::Attributes attributes);
