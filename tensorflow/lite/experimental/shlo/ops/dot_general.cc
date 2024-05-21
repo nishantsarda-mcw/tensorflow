@@ -280,6 +280,118 @@ absl::Status PrepareTensors(DotGeneralOp& op, const Tensor& lhs,
   const DimensionSize lhs_size = lhs.NumElements();
   const DimensionSize rhs_size = rhs.NumElements();
   const DimensionSize output_size = output.NumElements();
+  const size_t lhsb_size = op.attributes.lhs_batching_dimensions.size();
+  const size_t rhsb_size = op.attributes.rhs_batching_dimensions.size();
+  const size_t lhsc_size = op.attributes.lhs_contracting_dimensions.size();
+  const size_t rhsc_size = op.attributes.rhs_contracting_dimensions.size();
+
+  // Prepare Tensors for Transpose and Reshape
+  op.if_transpose = true;
+  if (lhs.Rank() == 3 && rhs.Rank() == 3 && lhsb_size == 1 && lhsc_size == 1 &&
+      op.attributes.lhs_batching_dimensions[0] == 0 &&
+      op.attributes.lhs_contracting_dimensions[0] == 2 &&
+      op.attributes.rhs_contracting_dimensions[0] == 2) {
+    op.lhs_reshaped = std::move(lhs);
+    op.rhs_reshaped = std::move(rhs);
+    op.if_transpose = false;
+  } else {
+    absl::InlinedVector<Axis, kMaxNumDimensions> newaxes_lhs;
+    for (size_t i = 0; i < lhsb_size; ++i) {
+      newaxes_lhs.push_back(op.attributes.lhs_batching_dimensions[i]);
+    }
+    for (size_t i = 0; i < op.lhs_result_dims.size(); ++i) {
+      newaxes_lhs.push_back(op.lhs_result_dims[i]);
+    }
+    for (size_t i = 0; i < lhsc_size; ++i) {
+      newaxes_lhs.push_back(op.attributes.lhs_contracting_dimensions[i]);
+    }
+
+    absl::InlinedVector<Axis, kMaxNumDimensions> newaxes_rhs;
+    for (size_t i = 0; i < rhsb_size; ++i) {
+      newaxes_rhs.push_back(op.attributes.rhs_batching_dimensions[i]);
+    }
+    for (size_t i = 0; i < op.rhs_result_dims.size(); ++i) {
+      newaxes_rhs.push_back(op.rhs_result_dims[i]);
+    }
+    for (size_t i = 0; i < rhsc_size; ++i) {
+      newaxes_rhs.push_back(op.attributes.rhs_contracting_dimensions[i]);
+    }
+
+    DimensionSize dim = 1;
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions> newshape_lhs(3);
+    if (lhsb_size == 0) {
+      newshape_lhs[0] = 1;
+    } else {
+      for (size_t i = 0; i < lhsb_size; ++i) {
+        dim *= lhs.shape().Dim(op.attributes.lhs_batching_dimensions[i]);
+      }
+      newshape_lhs[0] = dim;
+    }
+    dim = 1;
+    for (size_t i = 0; i < op.lhs_result_dims.size(); ++i) {
+      dim *= lhs.shape().Dim(op.lhs_result_dims[i]);
+    }
+    newshape_lhs[1] = dim;
+    dim = 1;
+    for (size_t i = 0; i < lhsc_size; ++i) {
+      dim *= lhs.shape().Dim(op.attributes.lhs_contracting_dimensions[i]);
+    }
+    newshape_lhs[2] = dim;
+
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions> newshape_rhs(3);
+    newshape_rhs[0] = newshape_lhs[0];
+    dim = 1;
+    for (size_t i = 0; i < op.rhs_result_dims.size(); ++i) {
+      dim *= rhs.shape().Dim(op.rhs_result_dims[i]);
+    }
+    newshape_rhs[1] = dim;
+    dim = 1;
+    for (size_t i = 0; i < rhsc_size; ++i) {
+      dim *= rhs.shape().Dim(op.attributes.rhs_contracting_dimensions[i]);
+    }
+    newshape_rhs[2] = dim;
+
+    const Shape new_reshape_lhs(
+        {newshape_lhs[0], newshape_lhs[1], newshape_lhs[2]});
+    const Shape new_reshape_rhs(
+        {newshape_rhs[0], newshape_rhs[1], newshape_rhs[2]});
+
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions> newaxes_lhs_shape;
+    for (size_t i = 0; i < newaxes_lhs.size(); ++i) {
+      newaxes_lhs_shape.push_back(lhs.shape().Dim(newaxes_lhs[i]));
+    }
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions> newaxes_rhs_shape;
+    for (size_t i = 0; i < newaxes_rhs.size(); ++i) {
+      newaxes_rhs_shape.push_back(rhs.shape().Dim(newaxes_rhs[i]));
+    }
+
+    op.lhs_transposed_data =
+        std::vector<std::byte>(lhs_size * sizeof(StorageT));
+    const Shape lhs_transpose_shape(newaxes_lhs_shape);
+    op.rhs_transposed_data =
+        std::vector<std::byte>(rhs_size * sizeof(StorageT));
+    const Shape rhs_transpose_shape(newaxes_rhs_shape);
+
+    Tensor lhs_transpose{.type = TensorType{.shape = lhs_transpose_shape,
+                                            .element_type = storage_type},
+                         .data = op.lhs_transposed_data.data()};
+    Tensor rhs_transpose{.type = TensorType{.shape = rhs_transpose_shape,
+                                            .element_type = storage_type},
+                         .data = op.rhs_transposed_data.data()};
+    Tensor lhs_reshape{.type = TensorType{.shape = new_reshape_lhs,
+                                          .element_type = storage_type},
+                       .data = op.lhs_transposed_data.data()};
+    Tensor rhs_reshape{.type = TensorType{.shape = new_reshape_rhs,
+                                          .element_type = storage_type},
+                       .data = op.rhs_transposed_data.data()};
+
+    op.lhs_permutations = std::move(newaxes_lhs);
+    op.rhs_permutations = std::move(newaxes_rhs);
+    op.lhs_transposed = std::move(lhs_transpose);
+    op.rhs_transposed = std::move(rhs_transpose);
+    op.lhs_reshaped = std::move(lhs_reshape);
+    op.rhs_reshaped = std::move(rhs_reshape);
+  }
 
   // quantized tensor prepare
   if (lhs.IsQuantized()) {
@@ -311,6 +423,42 @@ absl::Status PrepareTensors(DotGeneralOp& op, const Tensor& lhs,
 }
 
 template <DataType storage_type>
+absl::Status TransposeTensor(
+    const Tensor& operand,
+    absl::InlinedVector<Axis, kMaxNumDimensions>& permutation, Tensor& output) {
+  using StorageT = StorageType<storage_type>;
+  StorageT* output_buffer = output.GetDataAs<storage_type>();
+  const DimensionSize output_size = output.NumElements();
+  const Axis operand_rank = operand.Rank();
+
+  absl::InlinedVector<Axis, kMaxNumDimensions> operand_index(operand_rank);
+  absl::InlinedVector<Axis, kMaxNumDimensions> output_index(operand_rank);
+
+  for (DimensionSize k = 0; k < output_size; ++k) {
+    operand.GetNdIndex(k, operand_index);
+    for (Axis d = 0; d < operand_rank; ++d) {
+      output_index[d] = operand_index[permutation[d]];
+    }
+    output_buffer[output.FlattenIndex(output_index)] =
+        operand.Get<storage_type>(operand_index);
+  }
+  return absl::OkStatus();
+}
+
+template <DataType storage_type>
+absl::Status ReshapeTensor(const Tensor& operand, Tensor& output) {
+  using StorageT = StorageType<storage_type>;
+  StorageT* output_buffer = output.GetDataAs<storage_type>();
+  const StorageT* operand_buffer = operand.GetDataAs<storage_type>();
+  const DimensionSize output_size = output.NumElements();
+
+  for (DimensionSize k = 0; k < output_size; ++k) {
+    output_buffer[k] = operand_buffer[k];
+  }
+  return absl::OkStatus();
+}
+
+template <DataType storage_type>
 absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
                           const Tensor& rhs,
                           absl::Span<const Axis> lhs_batching_dimensions,
@@ -320,13 +468,25 @@ absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
                           Tensor& output) {
   using StorageT = StorageType<storage_type>;
   StorageT* output_buffer = output.GetDataAs<storage_type>();
-  const StorageT* lhs_buffer = lhs.GetDataAs<storage_type>();
-  const StorageT* rhs_buffer = rhs.GetDataAs<storage_type>();
 
-  const DimensionSize batch_size = lhs.shape().Dim(0);
-  const DimensionSize n = lhs.shape().Dim(1);
-  const DimensionSize p = lhs.shape().Dim(2);
-  const DimensionSize m = rhs.shape().Dim(1);
+  if (op.if_transpose) {
+    SHLO_REF_RETURN_ON_ERROR(TransposeTensor<storage_type>(
+        lhs, op.lhs_permutations, op.lhs_transposed));
+    SHLO_REF_RETURN_ON_ERROR(
+        ReshapeTensor<storage_type>(op.lhs_transposed, op.lhs_reshaped));
+    SHLO_REF_RETURN_ON_ERROR(TransposeTensor<storage_type>(
+        rhs, op.rhs_permutations, op.rhs_transposed));
+    SHLO_REF_RETURN_ON_ERROR(
+        ReshapeTensor<storage_type>(op.rhs_transposed, op.rhs_reshaped));
+  }
+
+  StorageT* lhs_reshape_buffer = op.lhs_reshaped.GetDataAs<storage_type>();
+  StorageT* rhs_reshape_buffer = op.rhs_reshaped.GetDataAs<storage_type>();
+
+  const DimensionSize batch_size = op.lhs_reshaped.shape().Dim(0);
+  const DimensionSize n = op.lhs_reshaped.shape().Dim(1);
+  const DimensionSize p = op.lhs_reshaped.shape().Dim(2);
+  const DimensionSize m = op.rhs_reshaped.shape().Dim(1);
   const DimensionSize output_batch_size = n * m;
   const DimensionSize lhs_batch_size = n * p;
   const DimensionSize rhs_batch_size = m * p;
@@ -337,8 +497,8 @@ absl::Status EvaluateImpl(DotGeneralOp& op, const Tensor& lhs,
       for (DimensionSize k = 0; k < p; ++k) {
         for (DimensionSize j = 0; j < m; ++j) {
           output_buffer[batch * output_batch_size + i * m + j] +=
-              lhs_buffer[batch * lhs_batch_size + i * p + k] *
-              rhs_buffer[batch * rhs_batch_size + j * p + k];
+              lhs_reshape_buffer[batch * lhs_batch_size + i * p + k] *
+              rhs_reshape_buffer[batch * rhs_batch_size + j * p + k];
         }
       }
     }
@@ -556,6 +716,16 @@ absl::Status Prepare(DotGeneralOp& op, const Tensor& lhs, const Tensor& rhs,
                       op.attributes.lhs_contracting_dimensions,
                       op.attributes.rhs_contracting_dimensions, output,
                       op.attributes.precision_configs));
+
+  const Axis lhs_rank = lhs.Rank();
+  const Axis rhs_rank = rhs.Rank();
+  op.lhs_result_dims =
+      CalculateResultDimensions(lhs_rank, op.attributes.lhs_batching_dimensions,
+                                op.attributes.lhs_contracting_dimensions);
+  op.rhs_result_dims =
+      CalculateResultDimensions(rhs_rank, op.attributes.rhs_batching_dimensions,
+                                op.attributes.rhs_contracting_dimensions);
+
   if (lhs.IsQuantized()) {
     DISPATCH_BOOL_INT_FLOAT(
         PrepareTensors, lhs.quantized_per_tensor_element_type().ExpressedType(),

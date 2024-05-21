@@ -40,9 +40,20 @@ class DotGeneralOp {
   Tensor lhs_dequantized;
   Tensor rhs_dequantized;
   Tensor output_dequantized;
+  Tensor lhs_reshaped;
+  Tensor rhs_reshaped;
+  Tensor lhs_transposed;
+  Tensor rhs_transposed;
   std::vector<std::byte> lhs_dequantized_data;
   std::vector<std::byte> rhs_dequantized_data;
   std::vector<std::byte> output_dequantized_data;
+  std::vector<std::byte> lhs_transposed_data;
+  std::vector<std::byte> rhs_transposed_data;
+  absl::InlinedVector<Axis, kMaxNumDimensions> lhs_result_dims;
+  absl::InlinedVector<Axis, kMaxNumDimensions> rhs_result_dims;
+  absl::InlinedVector<Axis, kMaxNumDimensions> lhs_permutations;
+  absl::InlinedVector<Axis, kMaxNumDimensions> rhs_permutations;
+  bool if_transpose;
 };
 
 DotGeneralOp Create(DotGeneralOp::Attributes attributes);
