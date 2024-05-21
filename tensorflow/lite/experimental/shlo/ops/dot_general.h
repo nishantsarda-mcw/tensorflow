@@ -37,8 +37,14 @@ class DotGeneralOp {
     std::array<PrecisionTypes, 2> precision_configs;
   };
   Attributes attributes;
+  Tensor lhs_dequantized;
+  Tensor rhs_dequantized;
+  Tensor output_dequantized;
   absl::InlinedVector<Axis, kMaxNumDimensions> lhs_result_dims;
   absl::InlinedVector<Axis, kMaxNumDimensions> rhs_result_dims;
+  std::vector<std::byte> lhs_dequantized_data;
+  std::vector<std::byte> rhs_dequantized_data;
+  std::vector<std::byte> output_dequantized_data;
 };
 
 DotGeneralOp Create(DotGeneralOp::Attributes attributes);
