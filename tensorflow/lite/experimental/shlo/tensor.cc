@@ -130,8 +130,9 @@ TensorElementTypeVariant Tensor::element_type() const {
 }
 
 void Tensor::GetNdIndex(
-    size_t index, absl::InlinedVector<Axis, kMaxNumDimensions>& indices) const {
-  size_t divisor = 1, dim = 0;
+    DimensionSize index,
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions>& indices) const {
+  DimensionSize divisor = 1, dim = 0;
   Axis rank = Rank();
   for (int64_t i = static_cast<int64_t>(rank) - 1; i >= 0; --i) {
     dim = shape().Dim(i);
@@ -142,13 +143,13 @@ void Tensor::GetNdIndex(
 }
 
 DimensionSize Tensor::FlattenIndex(
-    absl::InlinedVector<Axis, kMaxNumDimensions>& indices) const {
+    absl::InlinedVector<DimensionSize, kMaxNumDimensions>& indices) const {
   DimensionSize index = 0;
   if (shape().empty()) {
     return index;
   }
   size_t rank = Rank();
-  absl::InlinedVector<Axis, kMaxNumDimensions> strides(rank);
+  absl::InlinedVector<DimensionSize, kMaxNumDimensions> strides(rank);
   strides[rank - 1] = 1;
   for (int64_t i = static_cast<int64_t>(rank) - 2; i >= 0; --i) {
     strides[i] = strides[i + 1] * shape()[i + 1];
