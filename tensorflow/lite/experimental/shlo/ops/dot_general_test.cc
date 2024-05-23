@@ -19,6 +19,8 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include "tensorflow/lite/experimental/shlo/ops/test_util.h"
+#include "tensorflow/lite/experimental/shlo/quantize.h"
+#include "tensorflow/lite/experimental/shlo/quantized_tensor_element_type.h"
 #include "tensorflow/lite/experimental/shlo/shape.h"
 #include "tensorflow/lite/experimental/shlo/status_matcher.h"
 
@@ -243,6 +245,72 @@ TYPED_TEST(NonQuantizedkF16DotGeneralTest, kF16TestTypesTensorsWork1) {
   ASSERT_OK(Prepare(op, lhs, rhs, output_tensor));
   ASSERT_OK(Evaluate(op, lhs, rhs, output_tensor));
   EXPECT_THAT(output_data, Pointwise(FloatEq(), expected_data));
+}
+
+template <class T>
+struct QuantizedIntDotGeneralTest : ::testing::Test {};
+TYPED_TEST_SUITE(QuantizedIntDotGeneralTest, QuantizedTestTypes,
+                 TestParamNames);
+
+TYPED_TEST(QuantizedIntDotGeneralTest, QuantizedTestTypesTensorsWork1) {
+  using StorageT = typename TypeParam::StorageT;
+  using ExpressedT = typename TypeParam::ExpressedT;
+
+  const Shape shape_lhs({4, 3});
+  const Shape shape_rhs({3});
+  const Shape shape_r({4});
+
+  Vector<StorageT> lhs_data =
+      Vector<StorageT>{0, 0, 2, 0, 1, 2, 4, 2, 0, 1, 2, 6};
+  Vector<StorageT> rhs_data = Vector<StorageT>{1, 1, 0};
+  Vector<Axis> lhsb_dim{};
+  Vector<Axis> rhsb_dim{};
+  Vector<Axis> lhsc_dim{1};
+  Vector<Axis> rhsc_dim{0};
+  Vector<StorageT> output_data(shape_r.NumElements());
+
+  const ExpressedT scale = static_cast<ExpressedT>(1.2);
+  const StorageT zero_point = static_cast<StorageT>(-1);
+  const QuantizedElementTypePerTensor tensor_type =
+      QuantizedElementTypePerTensor(TypeParam::kStorage, zero_point,
+                                    TypeParam::kExpressed, scale);
+  const QuantizedElementTypePerTensor tensor_type_rhs =
+      QuantizedElementTypePerTensor(TypeParam::kStorage, 0,
+                                    TypeParam::kExpressed, scale);
+
+  Tensor lhs{.type = QuantizedPerTensorTensorType{.shape = shape_lhs,
+                                                  .element_type = tensor_type},
+             .data = lhs_data.data()};
+  Tensor rhs{
+      .type = QuantizedPerTensorTensorType{.shape = shape_rhs,
+                                           .element_type = tensor_type_rhs},
+      .data = rhs_data.data()};
+  Tensor output_tensor{
+      .type = QuantizedPerTensorTensorType{.shape = shape_r,
+                                           .element_type = tensor_type},
+      .data = output_data.data()};
+  std::array<PrecisionTypes, 2> precision_configs = {PrecisionTypes::DEFAULT,
+                                                     PrecisionTypes::DEFAULT};
+
+  auto op =
+      Create(DotGeneralOp::Attributes{.lhs_batching_dimensions = lhsb_dim,
+                                      .rhs_batching_dimensions = rhsb_dim,
+                                      .lhs_contracting_dimensions = lhsc_dim,
+                                      .rhs_contracting_dimensions = rhsc_dim,
+                                      .precision_configs = precision_configs});
+
+  Vector<float> expected_data = Vector<float>{2.88, 4.32, 11.531, 7.2};
+  Vector<float> expected_quantized(shape_r.NumElements());
+  std::transform(expected_data.begin(), expected_data.end(),
+                 expected_quantized.begin(), [&](float val) {
+                   return Quantize<TypeParam::kStorage, TypeParam::kExpressed>(
+                       static_cast<ExpressedT>(val), zero_point,
+                       static_cast<ExpressedT>(1.0) / scale);
+                 });
+
+  ASSERT_OK(Prepare(op, lhs, rhs, output_tensor));
+  ASSERT_OK(Evaluate(op, lhs, rhs, output_tensor));
+  EXPECT_THAT(output_data, Pointwise(Eq(), expected_quantized));
 }
 
 }  // namespace
