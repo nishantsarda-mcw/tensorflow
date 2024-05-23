@@ -36,6 +36,60 @@ using testing::Pointwise;
 namespace shlo_ref {
 
 namespace {
+
+template <class T>
+struct ConstraintTest : ::testing::Test {};
+TYPED_TEST_SUITE(ConstraintTest, IntTestTypes, TestParamNames);
+
+TYPED_TEST(ConstraintTest, InvalidOutputShapeRaiseAnError) {
+  using StorageT = typename TypeParam::StorageT;
+
+  const Shape shape_lhs({2, 2});
+  const Shape shape_rhs({2, 2});
+  const Shape shape_r({2, 2, 2});
+  Vector<int64_t> lhs_data_int{1, 2, 3, 4};
+  Vector<StorageT> lhs_data(lhs_data_int.begin(), lhs_data_int.end());
+  Vector<int64_t> rhs_data_int{1, 0, 0, 1};
+  Vector<StorageT> rhs_data(rhs_data_int.begin(), rhs_data_int.end());
+  Vector<StorageT> output_data(shape_r.NumElements());
+  Vector<Axis> lhsb_dim{};
+  Vector<Axis> rhsb_dim{};
+  Vector<Axis> lhsc_dim{};
+  Vector<Axis> rhsc_dim{};
+  absl::Span<const Axis> lhs_batching_dimensions(lhsb_dim);
+  absl::Span<const Axis> rhs_batching_dimensions(rhsb_dim);
+  absl::Span<const Axis> lhs_contracting_dimensions(lhsc_dim);
+  absl::Span<const Axis> rhs_contracting_dimensions(rhsc_dim);
+
+  Tensor lhs{.type = TensorType{.shape = shape_lhs,
+                                .element_type = TypeParam::kStorage},
+             .data = lhs_data.data()};
+  Tensor rhs{.type = TensorType{.shape = shape_rhs,
+                                .element_type = TypeParam::kStorage},
+             .data = rhs_data.data()};
+  Tensor output_tensor{
+      .type = TensorType{.shape = shape_r, .element_type = TypeParam::kStorage},
+      .data = output_data.data()};
+  std::array<PrecisionTypes, 2> precision_configs = {PrecisionTypes::DEFAULT,
+                                                     PrecisionTypes::DEFAULT};
+
+  auto op = Create(DotGeneralOp::Attributes{
+      .lhs_batching_dimensions = lhs_batching_dimensions,
+      .rhs_batching_dimensions = rhs_batching_dimensions,
+      .lhs_contracting_dimensions = lhs_contracting_dimensions,
+      .rhs_contracting_dimensions = rhs_contracting_dimensions,
+      .precision_configs = precision_configs});
+
+  Vector<int64_t> expected_data_int{1, 0, 0, 1, 2, 0, 0, 2};
+
+  const absl::Status status = Prepare(op, lhs, rhs, output_tensor);
+  Vector<StorageT> expected_data(expected_data_int.begin(),
+                                 expected_data_int.end());
+  EXPECT_THAT(status, shlo_ref::testing::StatusIs(
+                          absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(status.message(), "stablehlo.dot_general: Invalid output shape.");
+}
+
 template <class T>
 struct NonQuantizedIntDotGeneralTest : ::testing::Test {};
 TYPED_TEST_SUITE(NonQuantizedIntDotGeneralTest, IntTestTypes, TestParamNames);
