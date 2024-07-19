@@ -72,7 +72,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 
   const TfLiteType type = input1->type;
   if (type != kTfLiteInt8 && type != kTfLiteInt16 && type != kTfLiteInt32 &&
-      type != kTfLiteFloat32 && type != kTfLiteInt64) {
+      type != kTfLiteFloat32 && type != kTfLiteInt64 &&
+      type != kTfLiteFloat16 && type != kTfLiteBFloat16) {
     TF_LITE_KERNEL_LOG(context, "Type '%s' is not supported by floor_mod.",
                        TfLiteTypeGetName(type));
     return kTfLiteError;
@@ -158,6 +159,14 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
     case kTfLiteFloat32: {
       return EvalImpl<float>(context, data->requires_broadcast, input1, input2,
                              output);
+    }
+    case kTfLiteFloat16: {
+      return EvalImpl<Eigen::half>(context, data->requires_broadcast, input1,
+                                   input2, output);
+    }
+    case kTfLiteBFloat16: {
+      return EvalImpl<Eigen::bfloat16>(context, data->requires_broadcast,
+                                       input1, input2, output);
     }
     default: {
       TF_LITE_KERNEL_LOG(context, "Type '%s' is not supported by floor_mod.",

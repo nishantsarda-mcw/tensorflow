@@ -103,6 +103,32 @@ TEST(FloorModModel, FloatBroadcastFloorMod) {
   EXPECT_THAT(model.GetOutput(), ElementsAre(-2, 0, -2, -2));
 }
 
+TEST(FloorModModel, Float16BroadcastFloorMod) {
+  FloorModModel<Eigen::half> model({TensorType_FLOAT16, {1, 2, 2, 1}},
+                                   {TensorType_FLOAT16, {1}},
+                                   {TensorType_FLOAT16, {}});
+  model.PopulateTensor<Eigen::half>(
+      model.input1(),
+      {Eigen::half(10), Eigen::half(-9), Eigen::half(-11), Eigen::half(7)});
+  model.PopulateTensor<Eigen::half>(model.input2(), {Eigen::half(-3)});
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  EXPECT_THAT(model.GetOutputShape(), ElementsAre(1, 2, 2, 1));
+  EXPECT_THAT(model.GetOutput(), ElementsAre(-2, 0, -2, -2));
+}
+
+TEST(FloorModModel, BFloat16BroadcastFloorMod) {
+  FloorModModel<Eigen::bfloat16> model({TensorType_BFLOAT16, {1, 2, 2, 1}},
+                                       {TensorType_BFLOAT16, {1}},
+                                       {TensorType_BFLOAT16, {}});
+  model.PopulateTensor<Eigen::bfloat16>(
+      model.input1(), {Eigen::bfloat16(10), Eigen::bfloat16(-9),
+                       Eigen::bfloat16(-11), Eigen::bfloat16(7)});
+  model.PopulateTensor<Eigen::bfloat16>(model.input2(), {Eigen::bfloat16(-3)});
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  EXPECT_THAT(model.GetOutputShape(), ElementsAre(1, 2, 2, 1));
+  EXPECT_THAT(model.GetOutput(), ElementsAre(-2, 0, -2, -2));
+}
+
 TEST(FloorModModel, SimpleInt16) {
   FloorModModel<int16_t> model({TensorType_INT16, {1, 2, 2, 1}},
                                {TensorType_INT16, {1, 2, 2, 1}},
