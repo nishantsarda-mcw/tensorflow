@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <unordered_set>
 #include <vector>
 
 #include "Eigen/Core"  // from @eigen_archive
@@ -30,12 +31,62 @@ namespace builtin {
 namespace stablehlo_dot_general {
 namespace {
 
+static constexpr int kMaxDims = 6;
+
+struct DotGeneralData {
+ public:
+  enum { kLhsTensor, kRhsTensor };
+  enum { kOutputTensor };
+};
+
 using TfLiteIntArrayUniquePtr =
     std::unique_ptr<TfLiteIntArray, decltype(&TfLiteIntArrayFree)>;
 
-constexpr int kLhsTensor = 0;
-constexpr int kRhsTensor = 1;
-constexpr int kOutputTensor = 0;
+static bool HasInvalidDimension(const int64_t* dimensions, const int size,
+                                const int rank) {
+  return std::any_of(dimensions, dimensions + size,
+                     [=](const int64_t dim) { return dim < 0 || dim > rank; });
+}
+
+static bool HasSameDimensionSize(const TfLiteTensor* lhs,
+                                 const TfLiteTensor* rhs,
+                                 const int64_t* lhs_dimensions,
+                                 const int64_t* rhs_dimensions,
+                                 const int dimension_array_size) {
+  for (int i = 0; i < dimension_array_size; ++i) {
+    if (lhs->dims->data[lhs_dimensions[i]] !=
+        rhs->dims->data[rhs_dimensions[i]]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool HasUniqueDimensions(const int64_t* batching_dimensions,
+                                const int batching_array_size,
+                                const int64_t* contracting_dimensions,
+                                const int contracting_array_size) {
+  std::unordered_set<int64_t> batching_dimensions_set;
+  std::unordered_set<int64_t> contracting_dimensions_set;
+  batching_dimensions_set.insert(batching_dimensions,
+                                 batching_dimensions + batching_array_size);
+  if (batching_dimensions_set.size() != batching_array_size) {
+    return false;
+  }
+  contracting_dimensions_set.insert(
+      contracting_dimensions, contracting_dimensions + contracting_array_size);
+  if (contracting_dimensions_set.size() != contracting_array_size) {
+    return false;
+  }
+  for (int i = 0; i < batching_array_size; ++i) {
+    for (int j = 0; j < contracting_array_size; ++j) {
+      if (batching_dimensions[i] == contracting_dimensions[j]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 static std::vector<int64_t> CalculateResultDimensions(
     const int rank, const int64_t* batching_dimensions,
@@ -49,6 +100,81 @@ static std::vector<int64_t> CalculateResultDimensions(
     }
   }
   return result_dims;
+}
+
+TfLiteStatus CheckParameters(TfLiteContext* context,
+                             const TfLiteStablehloDotGeneralParams* params,
+                             const TfLiteTensor* lhs, const TfLiteTensor* rhs) {
+  TF_LITE_ENSURE_MSG(context, params->num_precision_configs == 2,
+                     "'stablehlo.dot_general' size of precision_config "
+                     "parameter must be two.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      params->num_lhs_batching_dimensions ==
+          params->num_rhs_batching_dimensions,
+      "'stablehlo.dot_general' size of lhs_batching_dimensions and "
+      "rhs_batching_dimensions must be the same.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      params->num_lhs_contracting_dimensions ==
+          params->num_rhs_contracting_dimensions,
+      "'stablehlo.dot_general' size of lhs_contracting_dimensions and "
+      "rhs_contracting_dimensions must be the same.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      HasUniqueDimensions(params->lhs_batching_dimensions,
+                          params->num_lhs_batching_dimensions,
+                          params->lhs_contracting_dimensions,
+                          params->num_lhs_contracting_dimensions),
+      "'stablehlo.dot_general' lhs_batching_dimensions and "
+      "lhs_contracting_dimensions must have unique dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      HasUniqueDimensions(params->rhs_batching_dimensions,
+                          params->num_rhs_batching_dimensions,
+                          params->rhs_contracting_dimensions,
+                          params->num_rhs_contracting_dimensions),
+      "'stablehlo.dot_general' rhs_batching_dimensions and "
+      "rhs_contracting_dimensions must have unique dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      !HasInvalidDimension(params->lhs_batching_dimensions,
+                           params->num_lhs_batching_dimensions,
+                           lhs->dims->size),
+      "'stablehlo.dot_general' has invalid lhs_batching_dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      !HasInvalidDimension(params->lhs_contracting_dimensions,
+                           params->num_lhs_contracting_dimensions,
+                           lhs->dims->size),
+      "'stablehlo.dot_general' has invalid lhs_contracting_dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      !HasInvalidDimension(params->rhs_batching_dimensions,
+                           params->num_rhs_batching_dimensions,
+                           rhs->dims->size),
+      "'stablehlo.dot_general' has invalid rhs_batching_dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      !HasInvalidDimension(params->rhs_contracting_dimensions,
+                           params->num_rhs_contracting_dimensions,
+                           rhs->dims->size),
+      "'stablehlo.dot_general' has invalid rhs_contracting_dimensions.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      HasSameDimensionSize(lhs, rhs, params->lhs_batching_dimensions,
+                           params->rhs_batching_dimensions,
+                           params->num_lhs_batching_dimensions),
+      "'stablehlo.dot_general' lhs and rhs tensors should have the same "
+      "batch dimension size.");
+  TF_LITE_ENSURE_MSG(
+      context,
+      HasSameDimensionSize(lhs, rhs, params->lhs_contracting_dimensions,
+                           params->rhs_contracting_dimensions,
+                           params->num_lhs_contracting_dimensions),
+      "'stablehlo.dot_general' lhs and rhs tensors should have the same "
+      "contracting dimension size.");
+  return TfLiteStatus::kTfLiteOk;
 }
 
 static TfLiteIntArrayUniquePtr GetResultShape(
@@ -85,7 +211,8 @@ static TfLiteIntArrayUniquePtr GetResultShape(
 }
 
 template <typename DataType>
-TfLiteStatus EvalImpl(const TfLiteTensor* lhs, const TfLiteTensor* rhs,
+TfLiteStatus EvalImpl(TfLiteContext* context, TfLiteNode* node,
+                      const TfLiteTensor* lhs, const TfLiteTensor* rhs,
                       TfLiteTensor* output) {
   const DataType* lhs_data = GetTensorData<DataType>(lhs);
   const DataType* rhs_data = GetTensorData<DataType>(rhs);
@@ -126,20 +253,36 @@ TfLiteStatus EvalImpl(const TfLiteTensor* lhs, const TfLiteTensor* rhs,
   return TfLiteStatus::kTfLiteOk;
 }
 
+void* Init(TfLiteContext* context, const char* options, size_t options_len) {
+  DotGeneralData* dot_general_data = new DotGeneralData();
+  return dot_general_data;
+}
+
+void Free(TfLiteContext* context, void* node_data) {
+  delete static_cast<DotGeneralData*>(node_data);
+}
+
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
 
   const TfLiteTensor* lhs;
-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kLhsTensor, &lhs));
+  TF_LITE_ENSURE_OK(
+      context, GetInputSafe(context, node, DotGeneralData::kLhsTensor, &lhs));
   const TfLiteTensor* rhs;
-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kRhsTensor, &rhs));
+  TF_LITE_ENSURE_OK(
+      context, GetInputSafe(context, node, DotGeneralData::kRhsTensor, &rhs));
   TfLiteTensor* output;
-  TF_LITE_ENSURE_OK(context,
-                    GetOutputSafe(context, node, kOutputTensor, &output));
+  TF_LITE_ENSURE_OK(
+      context,
+      GetOutputSafe(context, node, DotGeneralData::kOutputTensor, &output));
+  TF_LITE_ENSURE_EQ(context, lhs->type, rhs->type);
 
   const TfLiteStablehloDotGeneralParams* params =
       reinterpret_cast<TfLiteStablehloDotGeneralParams*>(node->builtin_data);
+  // Constraint checks as per StableHLO specs
+  TF_LITE_ENSURE_OK(context, CheckParameters(context, params, lhs, rhs));
+
   TfLiteIntArrayUniquePtr result_shape = GetResultShape(params, lhs, rhs);
   TF_LITE_ENSURE_STATUS(
       context->ResizeTensor(context, output, result_shape.release()));
@@ -150,26 +293,29 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   const TfLiteTensor* lhs;
-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kLhsTensor, &lhs));
+  TF_LITE_ENSURE_OK(
+      context, GetInputSafe(context, node, DotGeneralData::kLhsTensor, &lhs));
   const TfLiteTensor* rhs;
-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kRhsTensor, &rhs));
+  TF_LITE_ENSURE_OK(
+      context, GetInputSafe(context, node, DotGeneralData::kRhsTensor, &rhs));
   TfLiteTensor* output;
-  TF_LITE_ENSURE_OK(context,
-                    GetOutputSafe(context, node, kOutputTensor, &output));
+  TF_LITE_ENSURE_OK(
+      context,
+      GetOutputSafe(context, node, DotGeneralData::kOutputTensor, &output));
 
   TfLiteType data_type = lhs->type;
   if (data_type == kTfLiteInt8) {
-    return EvalImpl<int8_t>(lhs, rhs, output);
+    return EvalImpl<int8_t>(context, node, lhs, rhs, output);
   } else if (data_type == kTfLiteBFloat16) {
-    return EvalImpl<Eigen::bfloat16>(lhs, rhs, output);
+    return EvalImpl<Eigen::bfloat16>(context, node, lhs, rhs, output);
   } else if (data_type == kTfLiteFloat16) {
-    return EvalImpl<Eigen::half>(lhs, rhs, output);
+    return EvalImpl<Eigen::half>(context, node, lhs, rhs, output);
   } else if (data_type == kTfLiteFloat32) {
-    return EvalImpl<float>(lhs, rhs, output);
+    return EvalImpl<float>(context, node, lhs, rhs, output);
   } else if (data_type == kTfLiteInt16) {
-    return EvalImpl<int16_t>(lhs, rhs, output);
+    return EvalImpl<int16_t>(context, node, lhs, rhs, output);
   } else if (data_type == kTfLiteInt32) {
-    return EvalImpl<int32_t>(lhs, rhs, output);
+    return EvalImpl<int32_t>(context, node, lhs, rhs, output);
   } else {
     TF_LITE_KERNEL_LOG(context, "(DataType: %s) currently not supported.\n",
                        TfLiteTypeGetName(data_type));
@@ -180,8 +326,8 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace stablehlo_dot_general
 
 TfLiteRegistration* Register_STABLEHLO_DOT_GENERAL() {
-  static TfLiteRegistration r = {/*.init=*/nullptr,
-                                 /*.free=*/nullptr,
+  static TfLiteRegistration r = {/*.init=*/stablehlo_dot_general::Init,
+                                 /*.free=*/stablehlo_dot_general::Free,
                                  /*.prepare=*/stablehlo_dot_general::Prepare,
                                  /*.invoke=*/stablehlo_dot_general::Eval};
   return &r;
