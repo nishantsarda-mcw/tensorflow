@@ -28,6 +28,7 @@ limitations under the License.
 namespace tflite {
 namespace {
 
+using testing::ElementsAreArray;
 using testing::FloatEq;
 using testing::FloatNear;
 using testing::Pointwise;
@@ -85,7 +86,111 @@ class StablehloDotGeneralOpModel : public SingleOpModel {
   int output_;
 };
 
-TEST(StablehloDotGeneralModelTest, DotGeneralFloat32) {
+template <>
+void StablehloDotGeneralOpModel::SetInputs<Eigen::half>(
+    std::initializer_list<Eigen::half> data_lhs,
+    std::initializer_list<Eigen::half> data_rhs) {
+  PopulateTensor<Eigen::half>(lhs_, data_lhs);
+  PopulateTensor<Eigen::half>(rhs_, data_rhs);
+}
+template <>
+void StablehloDotGeneralOpModel::SetInputs<Eigen::bfloat16>(
+    std::initializer_list<Eigen::bfloat16> data_lhs,
+    std::initializer_list<Eigen::bfloat16> data_rhs) {
+  PopulateTensor<Eigen::bfloat16>(lhs_, data_lhs);
+  PopulateTensor<Eigen::bfloat16>(rhs_, data_rhs);
+}
+
+TEST(StablehloDotGeneralModelTest, Int8TestWorks1) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},  // lhs_batching_dimensions;
+      1,    // num_lhs_batching_dimensions
+      {0},  // rhs_batching_dimensions;
+      1,    // num_rhs_batching_dimensions
+      {2},  // lhs_contracting_dimensions;
+      1,    // num_lhs_contracting_dimensions
+      {1},  // rhs_contracting_dimensions;
+      1,    // num_rhs_contracting_dimensions
+      2,    // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT8, {7, 3, 4}},
+                                   {TensorType_INT8, {7, 4}},
+                                   {TensorType_INT8, {}}, params);
+
+  model.SetInputs<int8_t>(
+      {0,  1,  4,  1,  -2, -3, 0, 0, 6,  -1, 0,  0,  1,  0,  -2, 0,  1,
+       3,  4,  -6, 2,  4,  4,  0, 0, -2, -1, 1,  -2, -3, 0,  2,  -3, 0,
+       0,  -2, 4,  -7, 2,  2,  0, 4, 2,  0,  -6, 1,  1,  2,  -2, -2, 0,
+       -1, -4, -1, 0,  -1, 1,  3, 1, 1,  -4, 0,  0,  1,  -1, 0,  4,  -2,
+       0,  5,  0,  -1, 0,  2,  1, 2, -1, 1,  -3, -2, -6, -3, -1, -3},
+      {2,  0,  -1, 4, -4, 0, 2,  -1, 0, 6,  8, 0, -1, -3,
+       -1, -1, -3, 0, 5,  0, -3, 0,  3, -1, 2, 1, -2, -3});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int8_t> expected_values = {0,   -4, 12, -8,  10, 0,  -20,
+                                         -18, 0,  13, -14, 0,  6,  12,
+                                         2,   11, 17, 1,   -6, 11, -4};
+  EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray(expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, Int16TestWorks1) {
+  TfLiteStablehloDotGeneralParams params = {
+      {},  // lhs_batching_dimensions;
+      0,   // num_lhs_batching_dimensions
+      {},  // rhs_batching_dimensions;
+      0,   // num_rhs_batching_dimensions
+      {},  // lhs_contracting_dimensions;
+      0,   // num_lhs_contracting_dimensions
+      {},  // rhs_contracting_dimensions;
+      0,   // num_rhs_contracting_dimensions
+      2,   // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT16, {2, 2}},
+                                   {TensorType_INT16, {2, 2}},
+                                   {TensorType_INT16, {}}, params);
+
+  model.SetInputs<int16_t>({1, 2, 3, 4}, {1, 0, 0, 1});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int16_t> expected_values = {1, 0, 0, 1, 2, 0, 0, 2,
+                                          3, 0, 0, 3, 4, 0, 0, 4};
+  EXPECT_THAT(model.GetOutput<int16_t>(), ElementsAreArray(expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, Int32TestWorks1) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},     // lhs_batching_dimensions;
+      1,       // num_lhs_batching_dimensions
+      {0},     // rhs_batching_dimensions;
+      1,       // num_rhs_batching_dimensions
+      {2, 1},  // lhs_contracting_dimensions;
+      2,       // num_lhs_contracting_dimensions
+      {1, 2},  // rhs_contracting_dimensions;
+      2,       // num_rhs_contracting_dimensions
+      2,       // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT32, {1, 3, 4}},
+                                   {TensorType_INT32, {1, 4, 3}},
+                                   {TensorType_INT32, {}}, params);
+
+  model.SetInputs<int32_t>({2, 0, 0, 0, 5, -3, 0, 4, -1, 0, 0, -1},
+                           {0, 4, 2, 3, 3, 3, -6, -2, 1, -1, 1, 0});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int32_t> expected_values = {13};
+  EXPECT_THAT(model.GetOutput<int32_t>(), ElementsAreArray(expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, F32TestWorks1) {
   TfLiteStablehloDotGeneralParams params = {
       {0},  // lhs_batching_dimensions;
       1,    // num_lhs_batching_dimensions
@@ -113,7 +218,46 @@ TEST(StablehloDotGeneralModelTest, DotGeneralFloat32) {
   EXPECT_THAT(model.GetOutput<float>(), Pointwise(FloatEq(), expected_values));
 }
 
-TEST(StablehloDotGeneralModelTest, DotGeneralFloat16) {
+TEST(StablehloDotGeneralModelTest, F32TestWorks2) {
+  TfLiteStablehloDotGeneralParams params = {
+      {},   // lhs_batching_dimensions;
+      0,    // num_lhs_batching_dimensions
+      {},   // rhs_batching_dimensions;
+      0,    // num_rhs_batching_dimensions
+      {1},  // lhs_contracting_dimensions;
+      1,    // num_lhs_contracting_dimensions
+      {0},  // rhs_contracting_dimensions;
+      1,    // num_rhs_contracting_dimensions
+      2,    // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_FLOAT32, {4, 3}},
+                                   {TensorType_FLOAT32, {3, 6}},
+                                   {TensorType_FLOAT32, {}}, params);
+
+  model.SetInputs<float>(
+      {5.81311798, 2.08485532, 0.151162371, -1.21007407, -1.59476554,
+       0.846119463, -0.83784312, -0.416278511, 1.24929118, 3.46354723,
+       2.21915126, 3.81866336},
+      {-2.10215521, -1.803730, -7.83739519, 4.36787844, 1.4788357, 3.10357666,
+       -4.46420813, 0.879630148, -2.18081808, -1.95115197, -3.56435633,
+       -0.671983778, -2.76886797, -0.212248296, 2.77085519, -1.21441388,
+       -3.28464937, -4.60568237});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<float> expected_values = {
+      -21.9458523, -8.6834774,  -49.6875458, 21.1395512,  0.668963671,
+      15.9442625,  7.32033587,  0.600255728, 15.3061972,  -3.20136595,
+      1.11560607,  -6.58085871, 0.160507768, 0.87991172,  10.9359407,
+      -4.36453056, -3.85875082, -8.07441616, -27.7610416, -5.10577631,
+      -21.4037914, 6.1610136,   -15.3307991, -8.329400};
+  EXPECT_THAT(model.GetOutput<float>(),
+              Pointwise(FloatNear(1e-5), expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, F16TestWorks1) {
   TfLiteStablehloDotGeneralParams params = {
       {0},  // lhs_batching_dimensions;
       1,    // num_lhs_batching_dimensions
@@ -149,7 +293,52 @@ TEST(StablehloDotGeneralModelTest, DotGeneralFloat16) {
               Pointwise(FloatNear(1e-5), expected_values));
 }
 
-TEST(StablehloDotGeneralModelTest, DotGeneralBFloat16) {
+TEST(StablehloDotGeneralModelTest, F16TestWorks2) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0, 3},  // lhs_batching_dimensions;
+      2,       // num_lhs_batching_dimensions
+      {0, 3},  // rhs_batching_dimensions;
+      2,       // num_rhs_batching_dimensions
+      {2},     // lhs_contracting_dimensions;
+      1,       // num_lhs_contracting_dimensions
+      {2},     // rhs_contracting_dimensions;
+      1,       // num_rhs_contracting_dimensions
+      2,       // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_FLOAT16, {2, 2, 2, 2}},
+                                   {TensorType_FLOAT16, {2, 2, 2, 2}},
+                                   {TensorType_FLOAT16, {}}, params);
+
+  std::initializer_list<Eigen::half> lhs_data{
+      Eigen::half(1.1),   Eigen::half(2.2),   Eigen::half(3.3),
+      Eigen::half(4.3),   Eigen::half(5.5),   Eigen::half(6.0),
+      Eigen::half(7.0),   Eigen::half(8.0),   Eigen::half(11.1),
+      Eigen::half(12.22), Eigen::half(33.33), Eigen::half(44.32),
+      Eigen::half(15.15), Eigen::half(6.6),   Eigen::half(7.3),
+      Eigen::half(8.1)};
+  std::initializer_list<Eigen::half> rhs_data{
+      Eigen::half(1.2), Eigen::half(0.0), Eigen::half(0.0), Eigen::half(1.2),
+      Eigen::half(1.2), Eigen::half(0.0), Eigen::half(0.0), Eigen::half(1.2),
+      Eigen::half(1.2), Eigen::half(0.0), Eigen::half(0.0), Eigen::half(1.2),
+      Eigen::half(1.2), Eigen::half(0.0), Eigen::half(0.0), Eigen::half(1.2)};
+  model.SetInputs<Eigen::half>(lhs_data, rhs_data);
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::initializer_list<Eigen::half> expected_values{
+      Eigen::half(1.319),  Eigen::half(1.319),  Eigen::half(6.6),
+      Eigen::half(6.6),    Eigen::half(5.16),   Eigen::half(5.16),
+      Eigen::half(9.6),    Eigen::half(9.6),    Eigen::half(13.32),
+      Eigen::half(13.32),  Eigen::half(18.18),  Eigen::half(18.18),
+      Eigen::half(53.184), Eigen::half(53.184), Eigen::half(9.7265),
+      Eigen::half(9.7265)};
+  EXPECT_THAT(model.GetOutput<Eigen::half>(),
+              Pointwise(FloatNear(1e-5), expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, BFloat16Works1) {
   TfLiteStablehloDotGeneralParams params = {
       {0},  // lhs_batching_dimensions;
       1,    // num_lhs_batching_dimensions
@@ -184,6 +373,48 @@ TEST(StablehloDotGeneralModelTest, DotGeneralBFloat16) {
       Eigen::bfloat16(3.96875), Eigen::bfloat16(5.1875),
       Eigen::bfloat16(6.6250),  Eigen::bfloat16(7.21875),
       Eigen::bfloat16(8.4375),  Eigen::bfloat16(9.6250)};
+  EXPECT_THAT(model.GetOutput<Eigen::bfloat16>(),
+              Pointwise(FloatNear(1e-5), expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, BFloat16Works2) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},     // lhs_batching_dimensions;
+      1,       // num_lhs_batching_dimensions
+      {0},     // rhs_batching_dimensions;
+      1,       // num_rhs_batching_dimensions
+      {2, 1},  // lhs_contracting_dimensions;
+      2,       // num_lhs_contracting_dimensions
+      {1, 2},  // rhs_contracting_dimensions;
+      2,       // num_rhs_contracting_dimensions
+      2,       // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_BFLOAT16, {1, 3, 4}},
+                                   {TensorType_BFLOAT16, {1, 4, 3}},
+                                   {TensorType_BFLOAT16, {}}, params);
+
+  std::initializer_list<Eigen::bfloat16> lhs_data{
+      Eigen::bfloat16(4.968750e+00),  Eigen::bfloat16(-1.101560e+00),
+      Eigen::bfloat16(1.015630e+00),  Eigen::bfloat16(4.812500e+00),
+      Eigen::bfloat16(-3.398440e-01), Eigen::bfloat16(2.484380e+00),
+      Eigen::bfloat16(-5.187500e+00), Eigen::bfloat16(-1.109380e+00),
+      Eigen::bfloat16(-1.328130e+00), Eigen::bfloat16(3.312500e+00),
+      Eigen::bfloat16(-4.937500e+00), Eigen::bfloat16(-4.281250e+00)};
+  std::initializer_list<Eigen::bfloat16> rhs_data{
+      Eigen::bfloat16(-1.164060e+00), Eigen::bfloat16(1.437500e+00),
+      Eigen::bfloat16(-4.638670e-02), Eigen::bfloat16(-1.945310e+00),
+      Eigen::bfloat16(-5.187500e+00), Eigen::bfloat16(-1.414060e+00),
+      Eigen::bfloat16(-2.031250e+00), Eigen::bfloat16(-3.656250e+00),
+      Eigen::bfloat16(-1.738280e-01), Eigen::bfloat16(4.902340e-01),
+      Eigen::bfloat16(-5.968750e+00), Eigen::bfloat16(-3.671880e+00)};
+  model.SetInputs<Eigen::bfloat16>(lhs_data, rhs_data);
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::initializer_list<Eigen::bfloat16> expected_values = {
+      Eigen::bfloat16(2.087500e+01)};
   EXPECT_THAT(model.GetOutput<Eigen::bfloat16>(),
               Pointwise(FloatNear(1e-5), expected_values));
 }

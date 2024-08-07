@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/tensor_slice_util.h"
@@ -100,6 +101,8 @@ struct DotGeneralData {
  public:
   enum { kLhsTensor, kRhsTensor };
   enum { kOutputTensor };
+  // The index of the temporary tensors to store transposed LHS/RHS.
+  int scratch_tensor_index;
 
   TfLiteStatus CheckParameters(TfLiteContext* context,
                                const TfLiteStablehloDotGeneralParams* params,
@@ -199,18 +202,170 @@ struct DotGeneralData {
     return result;
   }
 
+  void Setup(TfLiteContext* context, TfLiteNode* node,
+             const TfLiteStablehloDotGeneralParams* params,
+             const TfLiteTensor* lhs, const TfLiteTensor* rhs,
+             TfLiteTensor* output) {
+    // prepare transpose and reshape tensors
+    for (int i = 0; i < lhsb_size_; ++i) {
+      newaxes_lhs_.push_back(params->lhs_batching_dimensions[i]);
+    }
+    for (int i = 0; i < num_lhs_result_dims_; ++i) {
+      newaxes_lhs_.push_back(lhs_result_dims_[i]);
+    }
+    for (int i = 0; i < lhsc_size_; ++i) {
+      newaxes_lhs_.push_back(params->lhs_contracting_dimensions[i]);
+    }
+    for (int i = 0; i < rhsb_size_; ++i) {
+      newaxes_rhs_.push_back(params->rhs_batching_dimensions[i]);
+    }
+    for (int i = 0; i < num_rhs_result_dims_; ++i) {
+      newaxes_rhs_.push_back(rhs_result_dims_[i]);
+    }
+    for (int i = 0; i < rhsc_size_; ++i) {
+      newaxes_rhs_.push_back(params->rhs_contracting_dimensions[i]);
+    }
+    // check if lhs reshape is required
+    if (lhs_rank_ == 3 && lhsb_size_ == 1 && lhsc_size_ == 1) {
+      do_lhs_reshape_ = false;
+    } else {
+      int64_t dim = 1;
+      if (lhsb_size_ == 0) {
+        newshape_lhs_[0] = 1;
+      } else {
+        for (int i = 0; i < lhsb_size_; ++i) {
+          dim *= lhs->dims->data[params->lhs_batching_dimensions[i]];
+        }
+        newshape_lhs_[0] = dim;
+      }
+      dim = 1;
+      for (int i = 0; i < num_lhs_result_dims_; ++i) {
+        dim *= lhs->dims->data[lhs_result_dims_[i]];
+      }
+      newshape_lhs_[1] = dim;
+      dim = 1;
+      for (int i = 0; i < lhsc_size_; ++i) {
+        dim *= lhs->dims->data[params->lhs_contracting_dimensions[i]];
+      }
+      newshape_lhs_[2] = dim;
+      do_lhs_reshape_ = true;
+    }
+    // check if rhs reshape is required
+    if (rhs_rank_ == 3 && rhsb_size_ == 1 && rhsc_size_ == 1) {
+      do_rhs_reshape_ = false;
+    } else {
+      int64_t dim = 1;
+      if (rhsb_size_ == 0) {
+        newshape_rhs_[0] = 1;
+      } else {
+        for (int i = 0; i < rhsb_size_; ++i) {
+          dim *= rhs->dims->data[params->rhs_batching_dimensions[i]];
+        }
+        newshape_rhs_[0] = dim;
+      }
+      dim = 1;
+      for (int i = 0; i < num_rhs_result_dims_; ++i) {
+        dim *= rhs->dims->data[rhs_result_dims_[i]];
+      }
+      newshape_rhs_[1] = dim;
+      dim = 1;
+      for (int i = 0; i < rhsc_size_; ++i) {
+        dim *= rhs->dims->data[params->rhs_contracting_dimensions[i]];
+      }
+      newshape_rhs_[2] = dim;
+      do_rhs_reshape_ = true;
+    }
+    // lhs_transpose
+    TfLiteIntArrayFree(node->temporaries);
+    node->temporaries = TfLiteIntArrayCreate(2);
+    node->temporaries->data[0] = scratch_tensor_index;
+    TfLiteTensor* lhs_transpose;
+    TF_LITE_ENSURE_OK(
+        context, GetTemporarySafe(context, node, /*index=*/0, &lhs_transpose));
+    TfLiteIntArray* lhs_transpose_shape = TfLiteIntArrayCreate(lhs_rank_);
+    for (int i = 0; i < lhs_rank_; ++i) {
+      lhs_transpose_shape->data[i] = lhs->dims->data[newaxes_lhs_[i]];
+    }
+    lhs_transpose->type = lhs->type;
+    lhs_transpose->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, lhs_transpose,
+                                                     lhs_transpose_shape));
+    // rhs transpose
+    node->temporaries->data[1] = scratch_tensor_index + 1;
+    TfLiteTensor* rhs_transpose;
+    TF_LITE_ENSURE_OK(
+        context, GetTemporarySafe(context, node, /*index=*/1, &rhs_transpose));
+    TfLiteIntArray* rhs_transpose_shape = TfLiteIntArrayCreate(rhs_rank_);
+    for (int i = 0; i < rhs_rank_; ++i) {
+      rhs_transpose_shape->data[i] = rhs->dims->data[newaxes_rhs_[i]];
+    }
+    rhs_transpose->type = rhs->type;
+    rhs_transpose->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, rhs_transpose,
+                                                     rhs_transpose_shape));
+  }
+
   template <typename DataType>
   TfLiteStatus EvalImpl(TfLiteContext* context, TfLiteNode* node,
                         const TfLiteTensor* lhs, const TfLiteTensor* rhs,
                         TfLiteTensor* output) {
-    const DataType* lhs_data = GetTensorData<DataType>(lhs);
-    const DataType* rhs_data = GetTensorData<DataType>(rhs);
+    // lhs_transpose
+    RuntimeShape lhs_transposed_shape(GetTensorShape(lhs));
+    RuntimeShape lhs_shape(GetTensorShape(lhs));
+    for (int i = 0; i < lhs_shape.DimensionsCount(); ++i) {
+      lhs_transposed_shape.SetDim(i, lhs_shape.Dims(newaxes_lhs_[i]));
+    }
+    TransposeParams lhs_params;
+    lhs_params.perm_count = lhs_rank_;
+    for (int i = 0; i < NumDimensions(lhs); ++i) {
+      lhs_params.perm[i] = newaxes_lhs_[i];
+    }
+    TfLiteTensor* lhs_transpose = GetTemporary(context, node, 0);
+    optimized_ops::Transpose(lhs_params, lhs_shape,
+                             GetTensorData<DataType>(lhs), lhs_transposed_shape,
+                             GetTensorData<DataType>(lhs_transpose));
+    // rhs_transpose
+    RuntimeShape rhs_transposed_shape(GetTensorShape(rhs));
+    RuntimeShape rhs_shape(GetTensorShape(rhs));
+    for (int i = 0; i < rhs_shape.DimensionsCount(); ++i) {
+      rhs_transposed_shape.SetDim(i, rhs_shape.Dims(newaxes_rhs_[i]));
+    }
+    TransposeParams rhs_params;
+    rhs_params.perm_count = rhs_rank_;
+    for (int i = 0; i < NumDimensions(rhs); ++i) {
+      rhs_params.perm[i] = newaxes_rhs_[i];
+    }
+    TfLiteTensor* rhs_transpose = GetTemporary(context, node, 1);
+    optimized_ops::Transpose(rhs_params, rhs_shape,
+                             GetTensorData<DataType>(rhs), rhs_transposed_shape,
+                             GetTensorData<DataType>(rhs_transpose));
+    // lhs reshape
+    if (do_lhs_reshape_) {
+      const int lhs_reshape_size = 3;
+      TfLiteIntArray* lhs_reshape = TfLiteIntArrayCreate(lhs_reshape_size);
+      for (int i = 0; i < lhs_reshape_size; ++i) {
+        lhs_reshape->data[i] = newshape_lhs_[i];
+      }
+      lhs_transpose->dims = lhs_reshape;
+    }
+    // rhs reshape
+    if (do_rhs_reshape_) {
+      const int rhs_reshape_size = 3;
+      TfLiteIntArray* rhs_reshape = TfLiteIntArrayCreate(rhs_reshape_size);
+      for (int i = 0; i < rhs_reshape_size; ++i) {
+        rhs_reshape->data[i] = newshape_rhs_[i];
+      }
+      rhs_transpose->dims = rhs_reshape;
+    }
+    // matrix multiplication using eigen
+    DataType* lhs_data = GetTensorData<DataType>(lhs_transpose);
+    DataType* rhs_data = GetTensorData<DataType>(rhs_transpose);
     DataType* output_data = GetTensorData<DataType>(output);
 
-    const int batch_size = lhs->dims->data[0];
-    const int n = lhs->dims->data[1];
-    const int p = lhs->dims->data[2];
-    const int m = rhs->dims->data[1];
+    const int batch_size = lhs_transpose->dims->data[0];
+    const int n = lhs_transpose->dims->data[1];
+    const int m = rhs_transpose->dims->data[1];
+    const int p = lhs_transpose->dims->data[2];
     const int output_batch_size = n * m;
     const int lhs_batch_size = n * p;
     const int rhs_batch_size = m * p;
@@ -255,10 +410,17 @@ struct DotGeneralData {
   int num_rhs_result_dims_;
   std::vector<int64_t> lhs_result_dims_;
   std::vector<int64_t> rhs_result_dims_;
+  std::vector<int64_t> newaxes_lhs_;
+  std::vector<int64_t> newaxes_rhs_;
+  int64_t newshape_lhs_[3];
+  int64_t newshape_rhs_[3];
+  bool do_lhs_reshape_;
+  bool do_rhs_reshape_;
 };
 
 void* Init(TfLiteContext* context, const char* options, size_t options_len) {
   DotGeneralData* dot_general_data = new DotGeneralData();
+  context->AddTensors(context, 2, &dot_general_data->scratch_tensor_index);
   return dot_general_data;
 }
 
@@ -293,6 +455,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
       dot_general_data.GetResultShape(params, lhs, rhs);
   TF_LITE_ENSURE_STATUS(
       context->ResizeTensor(context, output, result_shape.release()));
+  // prepare lhs and rhs transpose tensor
+  dot_general_data.Setup(context, node, params, lhs, rhs, output);
   return TfLiteStatus::kTfLiteOk;
 }
 
