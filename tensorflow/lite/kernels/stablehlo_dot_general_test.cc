@@ -68,7 +68,7 @@ class StablehloDotGeneralOpModel : public SingleOpModel {
             .Union());
     BuildInterpreter({GetShape(lhs_), GetShape(rhs_)});
   }
-
+  // set lhs and rhs data
   template <typename T>
   void SetInputs(std::initializer_list<T> data_lhs,
                  std::initializer_list<T> data_rhs) {
@@ -101,7 +101,86 @@ void StablehloDotGeneralOpModel::SetInputs<Eigen::bfloat16>(
   PopulateTensor<Eigen::bfloat16>(rhs_, data_rhs);
 }
 
-TEST(StablehloDotGeneralModelTest, Int8TestWorks1) {
+TEST(StablehloDotGeneralModelTest, QuantizedTestWorks1) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},  // lhs_batching_dimensions;
+      1,    // num_lhs_batching_dimensions
+      {0},  // rhs_batching_dimensions;
+      1,    // num_rhs_batching_dimensions
+      {1},  // lhs_contracting_dimensions;
+      1,    // num_lhs_contracting_dimensions
+      {1},  // rhs_contracting_dimensions;
+      1,    // num_rhs_contracting_dimensions
+      2,    // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT8, {1, 2, 2}, 0, 0, 2, 0},
+                                   {TensorType_INT8, {1, 2, 2}, 0, 0, 2, 0},
+                                   {TensorType_INT8, {}, 0, 0, 2, 0}, params);
+  model.SetInputs<int8_t>({10, 8, 1, 2}, {1, 0, 1, 1});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int8_t> expected_values = {22, 2, 20, 4};
+  EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray(expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, QuantizedTestWorks2) {
+  TfLiteStablehloDotGeneralParams params = {
+      {},   // lhs_batching_dimensions;
+      0,    // num_lhs_batching_dimensions
+      {},   // rhs_batching_dimensions;
+      0,    // num_rhs_batching_dimensions
+      {1},  // lhs_contracting_dimensions;
+      1,    // num_lhs_contracting_dimensions
+      {0},  // rhs_contracting_dimensions;
+      1,    // num_rhs_contracting_dimensions
+      2,    // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT8, {4, 3}, 0, 0, 1.2, -1},
+                                   {TensorType_INT8, {3}, 0, 0, 1.2, 0},
+                                   {TensorType_INT8, {}, 0, 0, 1.2, -1},
+                                   params);
+
+  model.SetInputs<int8_t>({0, 0, 2, 0, 1, 2, 4, 2, 0, 1, 2, 6}, {1, 1, 0});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int8_t> expected_values = {1, 3, 9, 5};
+  EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray(expected_values));
+}
+
+TEST(StablehloDotGeneralModelTest, QuantizedTestWorks3) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},     // lhs_batching_dimensions;
+      1,       // num_lhs_batching_dimensions
+      {0},     // rhs_batching_dimensions;
+      1,       // num_rhs_batching_dimensions
+      {2, 1},  // lhs_contracting_dimensions;
+      2,       // num_lhs_contracting_dimensions
+      {1, 2},  // rhs_contracting_dimensions;
+      2,       // num_rhs_contracting_dimensions
+      2,       // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT16, {1, 3, 4}, 0, 0, 1.4, 0},
+                                   {TensorType_INT16, {1, 4, 3}, 0, 0, 1.2, 0},
+                                   {TensorType_INT16, {}, 0, 0, 1.2, 0},
+                                   params);
+  model.SetInputs<int16_t>({2, 0, 0, 0, 5, -3, 0, 4, -1, 0, 0, -1},
+                           {0, 4, 2, 3, 3, 3, -6, -2, 1, -1, 1, 0});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int16_t> expected_values = {18};
+  EXPECT_THAT(model.GetOutput<int16_t>(), ElementsAreArray(expected_values));
+}
+// per channel quantization - only uint8_t and int8_t are supported
+TEST(StablehloDotGeneralModelTest, QuantizedTestWorks4) {
   TfLiteStablehloDotGeneralParams params = {
       {0},  // lhs_batching_dimensions;
       1,    // num_lhs_batching_dimensions
@@ -116,51 +195,15 @@ TEST(StablehloDotGeneralModelTest, Int8TestWorks1) {
        tflite::StablehloPrecisionConfig::
            StablehloPrecisionConfig_DEFAULT}  // precision config;
   };
-  StablehloDotGeneralOpModel model({TensorType_INT8, {7, 3, 4}},
-                                   {TensorType_INT8, {7, 4}},
-                                   {TensorType_INT8, {}}, params);
-
-  model.SetInputs<int8_t>(
-      {0,  1,  4,  1,  -2, -3, 0, 0, 6,  -1, 0,  0,  1,  0,  -2, 0,  1,
-       3,  4,  -6, 2,  4,  4,  0, 0, -2, -1, 1,  -2, -3, 0,  2,  -3, 0,
-       0,  -2, 4,  -7, 2,  2,  0, 4, 2,  0,  -6, 1,  1,  2,  -2, -2, 0,
-       -1, -4, -1, 0,  -1, 1,  3, 1, 1,  -4, 0,  0,  1,  -1, 0,  4,  -2,
-       0,  5,  0,  -1, 0,  2,  1, 2, -1, 1,  -3, -2, -6, -3, -1, -3},
-      {2,  0,  -1, 4, -4, 0, 2,  -1, 0, 6,  8, 0, -1, -3,
-       -1, -1, -3, 0, 5,  0, -3, 0,  3, -1, 2, 1, -2, -3});
+  StablehloDotGeneralOpModel model(
+      {TensorType_INT8, {2, 2, 2}, 0, 0, 1.4, 0, false},
+      {TensorType_INT8, {2, 2, 2}, 0, 0, 0, 0, true, {1.7, 1.6}, {0, 0}, 2},
+      {TensorType_INT8, {}, 0, 0, 0, 0, true, {1.7, 1.6}, {0, 0}, 2}, params);
+  model.SetInputs<int8_t>({1, 2, 3, 4, 5, 6, 7, 8}, {2, 0, 0, 2, 2, 0, 0, 2});
 
   ASSERT_EQ(model.Invoke(), kTfLiteOk);
-  std::vector<int8_t> expected_values = {0,   -4, 12, -8,  10, 0,  -20,
-                                         -18, 0,  13, -14, 0,  6,  12,
-                                         2,   11, 17, 1,   -6, 11, -4};
+  std::vector<int8_t> expected_values = {3, 6, 8, 11, 14, 17, 20, 22};
   EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray(expected_values));
-}
-
-TEST(StablehloDotGeneralModelTest, Int16TestWorks1) {
-  TfLiteStablehloDotGeneralParams params = {
-      {},  // lhs_batching_dimensions;
-      0,   // num_lhs_batching_dimensions
-      {},  // rhs_batching_dimensions;
-      0,   // num_rhs_batching_dimensions
-      {},  // lhs_contracting_dimensions;
-      0,   // num_lhs_contracting_dimensions
-      {},  // rhs_contracting_dimensions;
-      0,   // num_rhs_contracting_dimensions
-      2,   // num_precision_configs
-      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
-       tflite::StablehloPrecisionConfig::
-           StablehloPrecisionConfig_DEFAULT}  // precision config;
-  };
-  StablehloDotGeneralOpModel model({TensorType_INT16, {2, 2}},
-                                   {TensorType_INT16, {2, 2}},
-                                   {TensorType_INT16, {}}, params);
-
-  model.SetInputs<int16_t>({1, 2, 3, 4}, {1, 0, 0, 1});
-
-  ASSERT_EQ(model.Invoke(), kTfLiteOk);
-  std::vector<int16_t> expected_values = {1, 0, 0, 1, 2, 0, 0, 2,
-                                          3, 0, 0, 3, 4, 0, 0, 4};
-  EXPECT_THAT(model.GetOutput<int16_t>(), ElementsAreArray(expected_values));
 }
 
 TEST(StablehloDotGeneralModelTest, Int32TestWorks1) {

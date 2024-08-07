@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/kernels/dequantize.h"
 #include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
@@ -36,6 +37,16 @@ static constexpr int kMaxDims = 6;
 
 using TfLiteIntArrayUniquePtr =
     std::unique_ptr<TfLiteIntArray, decltype(&TfLiteIntArrayFree)>;
+
+static bool IsQuantized(const TfLiteTensor* input) {
+  if (input->quantization.type == kTfLiteAffineQuantization &&
+      input->quantization.params) {
+    auto* quant_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);
+    return (quant_params->scale && quant_params->scale->size > 0);
+  }
+  return false;
+}
 
 static bool HasInvalidDimension(const int64_t* dimensions, const int size,
                                 const int rank) {
@@ -106,8 +117,8 @@ struct DotGeneralData {
 
   TfLiteStatus CheckParameters(TfLiteContext* context,
                                const TfLiteStablehloDotGeneralParams* params,
-                               const TfLiteTensor* lhs,
-                               const TfLiteTensor* rhs) {
+                               const TfLiteTensor* lhs, const TfLiteTensor* rhs,
+                               TfLiteTensor* output) {
     lhs_rank_ = lhs->dims->size;
     rhs_rank_ = rhs->dims->size;
     lhsb_size_ = params->num_lhs_batching_dimensions;
@@ -170,10 +181,52 @@ struct DotGeneralData {
                              params->rhs_contracting_dimensions, lhsc_size_),
         "'stablehlo.dot_general' lhs and rhs tensors should have the same "
         "contracting dimension size.");
+    if (dequantize::IsQuantizedPerChannel(lhs)) {
+      TF_LITE_ENSURE_MSG(context, false,
+                         "'stablehlo.dot_general' lhs can't be per-axis "
+                         "quantized");
+    }
+    if (!IsQuantized(lhs) && !IsQuantized(rhs)) {
+      TF_LITE_ENSURE_MSG(context, lhs->type == rhs->type,
+                         "'stablehlo.dot_general' non-quantized lhs and rhs "
+                         "tensors should have the same type");
+    }
+    if (IsQuantized(lhs) || IsQuantized(rhs) || IsQuantized(output)) {
+      TF_LITE_ENSURE_MSG(
+          context, IsQuantized(lhs) && IsQuantized(rhs) && IsQuantized(output),
+          "'stablehlo.dot_general' if lhs is quantized then rhs and output "
+          "tensors must also be quantized");
+      if (!dequantize::IsQuantizedPerChannel(rhs)) {
+        TF_LITE_ENSURE_MSG(
+            context, !dequantize::IsQuantizedPerChannel(output),
+            "'stablehlo.dot_general' if lhs and rhs are per tensor quantized "
+            "then output tensor must also be per tensor quantized");
+        TF_LITE_ENSURE_MSG(
+            context, rhs->params.zero_point == 0,
+            "'stablehlo.dot_general' rhs per-tensor zero point must be 0.");
+      }
+      if (dequantize::IsQuantizedPerChannel(rhs)) {
+        const auto* affine_quantization =
+            reinterpret_cast<TfLiteAffineQuantization*>(
+                rhs->quantization.params);
+        for (int i = 0; i < affine_quantization->zero_point->size; ++i) {
+          TF_LITE_ENSURE_MSG(
+              context, affine_quantization->zero_point->data[i] == 0,
+              "'stablehlo.dot_general' rhs per-axis zero point must be 0.");
+        }
+        TF_LITE_ENSURE_MSG(
+            context,
+            !ArrayContains(params->rhs_contracting_dimensions, rhsc_size_,
+                           affine_quantization->quantized_dimension),
+            "'stablehlo.dot_general' if rhs is per-axis quantized then "
+            "quantization dimension of rhs must not be in "
+            "rhs_contracting_dimensions.");
+      }
+    }
     return TfLiteStatus::kTfLiteOk;
   }
 
-  TfLiteIntArrayUniquePtr GetResultShape(
+  TfLiteIntArrayUniquePtr GetOutputShape(
       const TfLiteStablehloDotGeneralParams* params, const TfLiteTensor* lhs,
       const TfLiteTensor* rhs) {
     lhs_result_dims_ = CalculateResultDimensions(
@@ -184,22 +237,22 @@ struct DotGeneralData {
         params->rhs_contracting_dimensions, rhsc_size_);
     num_lhs_result_dims_ = lhs_result_dims_.size();
     num_rhs_result_dims_ = rhs_result_dims_.size();
-    result_rank_ = lhsb_size_ + num_lhs_result_dims_ + num_rhs_result_dims_;
+    output_rank_ = lhsb_size_ + num_lhs_result_dims_ + num_rhs_result_dims_;
 
-    TfLiteIntArrayUniquePtr result = TfLiteIntArrayUniquePtr(
-        TfLiteIntArrayCreate(result_rank_), &TfLiteIntArrayFree);
+    TfLiteIntArrayUniquePtr output = TfLiteIntArrayUniquePtr(
+        TfLiteIntArrayCreate(output_rank_), &TfLiteIntArrayFree);
     // output shape calculation
     for (int i = 0; i < lhsb_size_; ++i) {
-      result->data[i] = lhs->dims->data[params->lhs_batching_dimensions[i]];
+      output->data[i] = lhs->dims->data[params->lhs_batching_dimensions[i]];
     }
     for (int i = 0; i < num_lhs_result_dims_; ++i) {
-      result->data[i + lhsb_size_] = lhs->dims->data[lhs_result_dims_[i]];
+      output->data[i + lhsb_size_] = lhs->dims->data[lhs_result_dims_[i]];
     }
     for (int i = 0; i < num_rhs_result_dims_; ++i) {
-      result->data[i + lhsb_size_ + num_lhs_result_dims_] =
+      output->data[i + lhsb_size_ + num_lhs_result_dims_] =
           rhs->dims->data[rhs_result_dims_[i]];
     }
-    return result;
+    return output;
   }
 
   void Setup(TfLiteContext* context, TfLiteNode* node,
@@ -277,7 +330,7 @@ struct DotGeneralData {
     }
     // lhs_transpose
     TfLiteIntArrayFree(node->temporaries);
-    node->temporaries = TfLiteIntArrayCreate(2);
+    node->temporaries = TfLiteIntArrayCreate(5);
     node->temporaries->data[0] = scratch_tensor_index;
     TfLiteTensor* lhs_transpose;
     TF_LITE_ENSURE_OK(
@@ -303,6 +356,46 @@ struct DotGeneralData {
     rhs_transpose->allocation_type = kTfLiteArenaRw;
     TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, rhs_transpose,
                                                      rhs_transpose_shape));
+    // quantize prepare
+    TfLiteIntArray* lhs_dequantize_shape = TfLiteIntArrayCreate(lhs_rank_);
+    for (int i = 0; i < lhs_rank_; ++i) {
+      lhs_dequantize_shape->data[i] = lhs->dims->data[i];
+    }
+    node->temporaries->data[2] = scratch_tensor_index + 2;
+    TfLiteTensor* lhs_dequantize;
+    TF_LITE_ENSURE_OK(
+        context, GetTemporarySafe(context, node, /*index=*/2, &lhs_dequantize));
+    lhs_dequantize->type = kTfLiteFloat32;
+    lhs_dequantize->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, lhs_dequantize,
+                                                     lhs_dequantize_shape));
+
+    TfLiteIntArray* rhs_dequantize_shape = TfLiteIntArrayCreate(rhs_rank_);
+    for (int i = 0; i < rhs_rank_; ++i) {
+      rhs_dequantize_shape->data[i] = rhs->dims->data[i];
+    }
+    node->temporaries->data[3] = scratch_tensor_index + 3;
+    TfLiteTensor* rhs_dequantize;
+    TF_LITE_ENSURE_OK(
+        context, GetTemporarySafe(context, node, /*index=*/3, &rhs_dequantize));
+    rhs_dequantize->type = kTfLiteFloat32;
+    rhs_dequantize->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, rhs_dequantize,
+                                                     rhs_dequantize_shape));
+
+    TfLiteIntArray* output_quantize_shape = TfLiteIntArrayCreate(output_rank_);
+    for (int i = 0; i < output_rank_; ++i) {
+      output_quantize_shape->data[i] = output->dims->data[i];
+    }
+    node->temporaries->data[4] = scratch_tensor_index + 4;
+    TfLiteTensor* output_quantize;
+    TF_LITE_ENSURE_OK(context, GetTemporarySafe(context, node, /*index=*/4,
+                                                &output_quantize));
+    output_quantize->type = kTfLiteFloat32;
+    output_quantize->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, output_quantize,
+                                                     output_quantize_shape));
+    return kTfLiteOk;
   }
 
   template <typename DataType>
@@ -398,6 +491,48 @@ struct DotGeneralData {
     return TfLiteStatus::kTfLiteOk;
   }
 
+  template <typename DataType>
+  TfLiteStatus EvalQuantize(TfLiteContext* context, TfLiteNode* node,
+                            const TfLiteTensor* lhs, const TfLiteTensor* rhs,
+                            TfLiteTensor* output) {
+    TfLiteTensor* lhs_dequantize = GetTemporary(context, node, 2);
+    TfLiteTensor* rhs_dequantize = GetTemporary(context, node, 3);
+    TfLiteTensor* output_dequantize = GetTemporary(context, node, 4);
+
+    dequantize::DequantizeImpl<dequantize::KernelType::kGenericOptimized>(
+        context, node, lhs, lhs_dequantize);
+    dequantize::DequantizeImpl<dequantize::KernelType::kGenericOptimized>(
+        context, node, rhs, rhs_dequantize);
+    EvalImpl<float>(context, node, lhs_dequantize, rhs_dequantize,
+                    output_dequantize);
+
+    RuntimeShape output_shape(GetTensorShape(output));
+    RuntimeShape output_dequantize_shape(GetTensorShape(output_dequantize));
+    if (dequantize::IsQuantizedPerChannel(output)) {
+      const auto* quantization_params =
+          reinterpret_cast<const TfLiteAffineQuantization*>(
+              output->quantization.params);
+      PerChannelQuantizationParams per_channel_op_params;
+      per_channel_op_params.quantized_dimension =
+          quantization_params->quantized_dimension;
+      per_channel_op_params.scale = quantization_params->scale->data;
+      per_channel_op_params.zero_point = quantization_params->zero_point->data;
+      reference_ops::PerChannelQuantize(
+          per_channel_op_params, output_dequantize_shape,
+          GetTensorData<float>(output_dequantize), output_shape,
+          GetTensorData<DataType>(output));
+    } else {
+      tflite::QuantizationParams op_params;
+      op_params.zero_point = output->params.zero_point;
+      op_params.scale = output->params.scale;
+      optimized_ops::AffineQuantize<DataType>(
+          op_params, output_dequantize_shape,
+          GetTensorData<float>(output_dequantize), output_shape,
+          GetTensorData<DataType>(output));
+    }
+    return kTfLiteOk;
+  }
+
  private:
   int lhs_rank_;
   int rhs_rank_;
@@ -405,7 +540,7 @@ struct DotGeneralData {
   int rhsb_size_;
   int lhsc_size_;
   int rhsc_size_;
-  int result_rank_;
+  int output_rank_;
   int num_lhs_result_dims_;
   int num_rhs_result_dims_;
   std::vector<int64_t> lhs_result_dims_;
@@ -420,7 +555,7 @@ struct DotGeneralData {
 
 void* Init(TfLiteContext* context, const char* options, size_t options_len) {
   DotGeneralData* dot_general_data = new DotGeneralData();
-  context->AddTensors(context, 2, &dot_general_data->scratch_tensor_index);
+  context->AddTensors(context, 5, &dot_general_data->scratch_tensor_index);
   return dot_general_data;
 }
 
@@ -442,17 +577,16 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_OK(
       context,
       GetOutputSafe(context, node, DotGeneralData::kOutputTensor, &output));
-  TF_LITE_ENSURE_EQ(context, lhs->type, rhs->type);
 
   DotGeneralData& dot_general_data =
       *reinterpret_cast<DotGeneralData*>(node->user_data);
   const TfLiteStablehloDotGeneralParams* params =
       reinterpret_cast<TfLiteStablehloDotGeneralParams*>(node->builtin_data);
   // Constraint checks Stablehlo specs
-  TF_LITE_ENSURE_OK(
-      context, dot_general_data.CheckParameters(context, params, lhs, rhs));
+  TF_LITE_ENSURE_OK(context, dot_general_data.CheckParameters(
+                                 context, params, lhs, rhs, output));
   TfLiteIntArrayUniquePtr result_shape =
-      dot_general_data.GetResultShape(params, lhs, rhs);
+      dot_general_data.GetOutputShape(params, lhs, rhs);
   TF_LITE_ENSURE_STATUS(
       context->ResizeTensor(context, output, result_shape.release()));
   // prepare lhs and rhs transpose tensor
@@ -486,9 +620,11 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
     return dot_general_data.EvalImpl<Eigen::half>(context, node, lhs, rhs,
                                                   output);
   } else if (data_type == kTfLiteInt8) {
-    return dot_general_data.EvalImpl<int8_t>(context, node, lhs, rhs, output);
+    return dot_general_data.EvalQuantize<int8_t>(context, node, lhs, rhs,
+                                                 output);
   } else if (data_type == kTfLiteInt16) {
-    return dot_general_data.EvalImpl<int16_t>(context, node, lhs, rhs, output);
+    return dot_general_data.EvalQuantize<int16_t>(context, node, lhs, rhs,
+                                                  output);
   } else if (data_type == kTfLiteInt32) {
     return dot_general_data.EvalImpl<int32_t>(context, node, lhs, rhs, output);
   } else {
