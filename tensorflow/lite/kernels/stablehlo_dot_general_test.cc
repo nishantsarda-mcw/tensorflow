@@ -16,14 +16,14 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <cstdint>
-#include <initializer_list>
-#include <vector>
+// #include <cstdint>
+// #include <initializer_list>
+// #include <vector>
 
-#include "tensorflow/lite/c/c_api_types.h"
-#include "tensorflow/lite/core/c/builtin_op_data.h"
+//#include "tensorflow/lite/c/c_api_types.h"
+//#include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/kernels/test_util.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+// #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace {
@@ -79,12 +79,80 @@ class StablehloDotGeneralOpModel : public SingleOpModel {
   std::vector<T> GetOutput() {
     return ExtractVector<T>(output_);
   }
+  template <typename T>
+  std::vector<float> GetDequantizedOutput() {
+    return Dequantize<T>(ExtractVector<T>(output_), GetScale(output_),
+                         GetZeroPoint(output_));
+  }
+  int lhs() { return lhs_; }
+  int rhs() { return rhs_; }
 
  protected:
   int lhs_;
   int rhs_;
   int output_;
 };
+
+TEST(StablehloDotGeneralModelTest, DotGeneralInt8_PerTensorQuantization) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},     // lhs_batching_dimensions;
+      1,       // num_lhs_batching_dimensions
+      {0},     // rhs_batching_dimensions;
+      1,       // num_rhs_batching_dimensions
+      {2, 1},  // lhs_contracting_dimensions;
+      2,       // num_lhs_contracting_dimensions
+      {1, 2},  // rhs_contracting_dimensions;
+      2,       // num_rhs_contracting_dimensions
+      2,       // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model({TensorType_INT8, {1, 3, 4}, 0, 0, 1.4, 0},
+                                   {TensorType_INT8, {1, 4, 3}, 0, 0, 1.2, 0},
+                                   {TensorType_INT8, {}, 0, 0, 1.2, 0}, params);
+
+  model.QuantizeAndPopulate<int8_t>(model.lhs(),
+                                    {2, 0, 0, 0, 5, -3, 0, 4, -1, 0, 0, -1});
+  model.QuantizeAndPopulate<int8_t>(model.rhs(),
+                                    {0, 4, 2, 3, 3, 3, -6, -2, 1, -1, 1, 0});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int8_t> expected_values = {12};
+  EXPECT_THAT(model.GetDequantizedOutput<int8_t>(),
+              ElementsAreArray(expected_values));
+  // For good measure, let's also verify the quantized values:
+  EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray({10}));
+}
+
+TEST(StablehloDotGeneralModelTest, DotGeneralInt8_PerChannelQuantization) {
+  TfLiteStablehloDotGeneralParams params = {
+      {0},  // lhs_batching_dimensions;
+      1,    // num_lhs_batching_dimensions
+      {0},  // rhs_batching_dimensions;
+      1,    // num_rhs_batching_dimensions
+      {2},  // lhs_contracting_dimensions;
+      1,    // num_lhs_contracting_dimensions
+      {1},  // rhs_contracting_dimensions;
+      1,    // num_rhs_contracting_dimensions
+      2,    // num_precision_configs
+      {tflite::StablehloPrecisionConfig::StablehloPrecisionConfig_DEFAULT,
+       tflite::StablehloPrecisionConfig::
+           StablehloPrecisionConfig_DEFAULT}  // precision config;
+  };
+  StablehloDotGeneralOpModel model(
+      {TensorType_INT8, {2, 2, 2}, 0, 0, 1.4, 0, false},
+      {TensorType_INT8, {2, 2, 2}, 0, 0, 0, 0, true, {2.0, 1.5}, {0, 0}, 2},
+      {TensorType_INT8, {}, 0, 0, 0, 0, true, {1.5, 2.0}, {0, 0}, 2}, params);
+
+  model.QuantizeAndPopulate<int8_t>(model.lhs(), {1, 2, 3, 4, 5, 6, 7, 8});
+  model.PerChannelSymmetricQuantizeAndPopulate(model.rhs(),
+                                               {2, 0, 0, 2, 2, 0, 0, 2});
+
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  std::vector<int8_t> expected_values = {2, 1, 4, 3, 7, 4, 9, 6};
+  EXPECT_THAT(model.GetOutput<int8_t>(), ElementsAreArray(expected_values));
+}
 
 TEST(StablehloDotGeneralModelTest, DotGeneralInt32_ScalarOutput) {
   TfLiteStablehloDotGeneralParams params = {

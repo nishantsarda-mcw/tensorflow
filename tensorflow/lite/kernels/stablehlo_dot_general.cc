@@ -13,16 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
+// #include <cstdint>
 #include <unordered_set>
-#include <vector>
+// #include <vector>
 
-#include "Eigen/Core"  // from @eigen_archive
-#include "tensorflow/lite/core/c/builtin_op_data.h"
-#include "tensorflow/lite/core/c/c_api_types.h"
-#include "tensorflow/lite/core/c/common.h"
-#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
-#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+// #include "Eigen/Core"  // from @eigen_archive
+//#include "tensorflow/lite/core/c/builtin_op_data.h"
+// #include "tensorflow/lite/core/c/c_api_types.h"
+//#include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/kernels/dequantize.h"
+//#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+//#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/tensor_slice_util.h"
 
@@ -49,10 +50,28 @@ struct DotGeneralData {
   int64_t newshape_rhs[3];
   bool do_lhs_reshape;
   bool do_rhs_reshape;
+  // Quantization parameters
+  int32_t output_activation_min;
+  int32_t output_activation_max;
+  int32_t output_multiplier;
+  int output_shift;
+  // Per-channel output multiplier and shift.
+  std::vector<int32_t> per_channel_output_multiplier;
+  std::vector<int> per_channel_output_shift;
 };
 
 using TfLiteIntArrayUniquePtr =
     std::unique_ptr<TfLiteIntArray, decltype(&TfLiteIntArrayFree)>;
+
+static bool IsQuantized(const TfLiteTensor* input) {
+  if (input->quantization.type == kTfLiteAffineQuantization &&
+      input->quantization.params) {
+    auto* quant_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);
+    return (quant_params->scale && quant_params->scale->size > 0);
+  }
+  return false;
+}
 
 static bool HasInvalidDimension(const int64_t* dimensions, const int size,
                                 const int rank) {
@@ -187,6 +206,48 @@ TfLiteStatus CheckParameters(TfLiteContext* context, TfLiteNode* node,
                            params->num_lhs_contracting_dimensions),
       "'stablehlo.dot_general' lhs and rhs tensors should have the same "
       "contracting dimension size.");
+  if (dequantize::IsQuantizedPerChannel(lhs)) {
+    TF_LITE_ENSURE_MSG(context, false,
+                       "'stablehlo.dot_general' lhs tensor can't be per-axis "
+                       "quantized");
+  }
+  if (!IsQuantized(lhs) && !IsQuantized(rhs)) {
+    TF_LITE_ENSURE_MSG(context, lhs->type == rhs->type,
+                       "'stablehlo.dot_general' non-quantized lhs and rhs "
+                       "tensors should have the same type");
+  }
+  if (IsQuantized(lhs) || IsQuantized(rhs) || IsQuantized(output)) {
+    TF_LITE_ENSURE_MSG(
+        context, IsQuantized(lhs) && IsQuantized(rhs) && IsQuantized(output),
+        "'stablehlo.dot_general' if lhs is quantized then rhs and output "
+        "tensors must also be quantized");
+    if (!dequantize::IsQuantizedPerChannel(rhs)) {
+      TF_LITE_ENSURE_MSG(
+          context, !dequantize::IsQuantizedPerChannel(output),
+          "'stablehlo.dot_general' if lhs and rhs are per tensor quantized "
+          "then output tensor must also be per tensor quantized");
+      TF_LITE_ENSURE_MSG(
+          context, rhs->params.zero_point == 0,
+          "'stablehlo.dot_general' rhs per-tensor zero point must be 0.");
+    }
+    if (dequantize::IsQuantizedPerChannel(rhs)) {
+      const auto* affine_quantization =
+          reinterpret_cast<TfLiteAffineQuantization*>(rhs->quantization.params);
+      for (int i = 0; i < affine_quantization->zero_point->size; ++i) {
+        TF_LITE_ENSURE_MSG(
+            context, affine_quantization->zero_point->data[i] == 0,
+            "'stablehlo.dot_general' rhs per-axis zero point must be 0.");
+      }
+      TF_LITE_ENSURE_MSG(
+          context,
+          !ArrayContains(params->rhs_contracting_dimensions,
+                         params->num_rhs_contracting_dimensions,
+                         affine_quantization->quantized_dimension),
+          "'stablehlo.dot_general' if rhs is per-axis quantized then "
+          "quantization dimension of rhs must not be in "
+          "rhs_contracting_dimensions.");
+    }
+  }
   return TfLiteStatus::kTfLiteOk;
 }
 
@@ -246,8 +307,8 @@ TfLiteStatus PrepareTemporaries(TfLiteContext* context, TfLiteNode* node,
   const int rhsc_size = params->num_rhs_contracting_dimensions;
   const int num_lhs_result_dims = opdata.lhs_result_dims.size();
   const int num_rhs_result_dims = opdata.rhs_result_dims.size();
-  // prepare transpose tensors - putting batching dims at the start and
-  // contracting dims at the end
+  // prepare transpose tensors - putting batching dims at the start, resultant
+  // dims in middle and contracting dims at the end.
   for (int i = 0; i < lhsb_size; ++i) {
     opdata.newaxes_lhs.push_back(params->lhs_batching_dimensions[i]);
   }
@@ -441,6 +502,52 @@ TfLiteStatus EvalImpl(TfLiteContext* context, TfLiteNode* node,
     } else {
       eigen_dst.noalias() = eigen_lhs * eigen_rhs;
     }
+    // per-tensor Quantization
+    if ((lhs->type == kTfLiteInt8 || lhs->type == kTfLiteInt16) &&
+        !dequantize::IsQuantizedPerChannel(rhs)) {
+      std::vector<int32_t> output_data_flattened(
+          eigen_dst.data(), eigen_dst.data() + eigen_dst.size());
+      const int stride_output_data = batch * output_batch_size;
+
+      for (int i = 0; i < output_data_flattened.size(); ++i) {
+        int32_t scaled_acc = MultiplyByQuantizedMultiplier(
+            output_data_flattened[i], opdata.output_multiplier,
+            opdata.output_shift);
+        scaled_acc += output->params.zero_point;
+        scaled_acc = std::max(scaled_acc, opdata.output_activation_min);
+        scaled_acc = std::min(scaled_acc, opdata.output_activation_max);
+        output_data[stride_output_data + i] = static_cast<DataType>(scaled_acc);
+      }
+    }
+  }
+  // per-channel Quantization
+  if ((lhs->type == kTfLiteInt8 || lhs->type == kTfLiteInt16) &&
+      dequantize::IsQuantizedPerChannel(rhs)) {
+    const auto* affine_quantization =
+        reinterpret_cast<TfLiteAffineQuantization*>(
+            output->quantization.params);
+
+    const int32_t quantized_dimension =
+        affine_quantization->quantized_dimension;
+    const int32_t num_dims = GetTensorShape(output).DimensionsCount();
+    const int32_t* dims_data = GetTensorShape(output).DimsData();
+    std::vector<int> current_dim(num_dims, 0);
+
+    do {
+      size_t offset =
+          ReducedOutputOffset(num_dims, reinterpret_cast<const int*>(dims_data),
+                              current_dim.data(), 0, nullptr);
+      const int32_t val = output_data[offset];
+      const int out_channel = current_dim[quantized_dimension];
+      int32_t scaled_acc = MultiplyByQuantizedMultiplier(
+          val, opdata.per_channel_output_multiplier[out_channel],
+          opdata.per_channel_output_shift[out_channel]);
+
+      scaled_acc = std::max(scaled_acc, opdata.output_activation_min);
+      scaled_acc = std::min(scaled_acc, opdata.output_activation_max);
+      output_data[offset] = static_cast<DataType>(scaled_acc);
+    } while (NextIndex(num_dims, reinterpret_cast<const int*>(dims_data),
+                       current_dim.data()));
   }
   return TfLiteStatus::kTfLiteOk;
 }
@@ -472,6 +579,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 
   const TfLiteStablehloDotGeneralParams* params =
       reinterpret_cast<TfLiteStablehloDotGeneralParams*>(node->builtin_data);
+  DotGeneralData& opdata = *reinterpret_cast<DotGeneralData*>(node->user_data);
+
   // Constraint checks as per StableHLO specs
   TF_LITE_ENSURE_OK(context,
                     CheckParameters(context, node, params, lhs, rhs, output));
@@ -483,6 +592,40 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_OK(
       context, PrepareTemporaries(context, node, params, lhs, rhs, output));
 
+  // For Int16, Quantization should be symmetric.
+  if (lhs->type == kTfLiteInt16) {
+    TF_LITE_ENSURE_EQ(context, lhs->params.zero_point, 0);
+    TF_LITE_ENSURE_EQ(context, rhs->params.zero_point, 0);
+    TF_LITE_ENSURE_EQ(context, output->params.zero_point, 0);
+  }
+  // Populate Quantization params
+  if ((lhs->type == kTfLiteInt8 || lhs->type == kTfLiteInt16)) {
+    TF_LITE_ENSURE_EQ(context, rhs->quantization.type,
+                      kTfLiteAffineQuantization);
+    const auto* rhs_quantization_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(rhs->quantization.params);
+    const auto* output_quantization_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(
+            output->quantization.params);
+    int32_t channels_out =
+        output->dims->data[output_quantization_params->quantized_dimension];
+
+    TF_LITE_ENSURE(context, rhs_quantization_params);
+    TF_LITE_ENSURE(context, rhs_quantization_params->scale);
+    TF_LITE_ENSURE(context,
+                   (rhs_quantization_params->scale->size == 1 ||
+                    rhs_quantization_params->scale->size == channels_out));
+
+    opdata.per_channel_output_multiplier.resize(channels_out);
+    opdata.per_channel_output_shift.resize(channels_out);
+
+    TF_LITE_ENSURE_STATUS(tflite::PopulateDotGeneralQuantizationParams(
+        context, lhs, rhs, output, &opdata.output_multiplier,
+        &opdata.output_shift, &opdata.output_activation_min,
+        &opdata.output_activation_max,
+        opdata.per_channel_output_multiplier.data(),
+        opdata.per_channel_output_shift.data(), channels_out));
+  }
   return TfLiteStatus::kTfLiteOk;
 }
 

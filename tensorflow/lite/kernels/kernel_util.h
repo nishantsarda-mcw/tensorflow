@@ -239,6 +239,13 @@ inline bool IsHybridOp(const TfLiteTensor* input, const TfLiteTensor* weight) {
           input->type == kTfLiteFloat32);
 }
 
+TfLiteStatus PopulateDotGeneralQuantizationParams(
+    TfLiteContext* context, const TfLiteTensor* lhs, const TfLiteTensor* rhs,
+    TfLiteTensor* output, int32_t* multiplier, int* shift,
+    int32_t* output_activation_min, int32_t* output_activation_max,
+    int32_t* per_channel_multiplier, int32_t* per_channel_shift,
+    int num_channels);
+
 // Check dimensionality match and populate OpData for Conv and DepthwiseConv.
 TfLiteStatus PopulateConvolutionQuantizationParams(
     TfLiteContext* context, const TfLiteTensor* input,
