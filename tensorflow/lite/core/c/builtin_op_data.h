@@ -37,6 +37,7 @@ extern "C" {
 #define TFLITE_STABLEHLO_GATHER_PARAMS_MAX_DIMENSION_COUNT 8
 #define TFLITE_STABLEHLO_REDUCE_WINDOW_PARAMS_MAX_DIMENSION_COUNT 8
 #define TFLITE_STABLEHLO_PAD_PARAMS_MAX_DIMENSION_COUNT 8
+#define TFLITE_STABLEHLO_DOT_GENERAL_PARAMS_MAX_DIMENSION_COUNT 6
 
 // TODO(aselle): Consider using "if this then that" for testing.
 
@@ -591,6 +592,26 @@ typedef enum {
 typedef struct {
   TfLiteRngAlgorithm algorithm;
 } TfLiteStablehloRngBitGeneratorParams;
+
+typedef struct {
+  // See the stablehlo spec for the explanation of the attributes:
+  // https://github.com/openxla/stablehlo/blob/main/docs/spec.md#dot_general
+  int64_t lhs_batching_dimensions
+      [TFLITE_STABLEHLO_DOT_GENERAL_PARAMS_MAX_DIMENSION_COUNT];
+  int num_lhs_batching_dimensions;
+  int64_t rhs_batching_dimensions
+      [TFLITE_STABLEHLO_DOT_GENERAL_PARAMS_MAX_DIMENSION_COUNT];
+  int num_rhs_batching_dimensions;
+  int64_t lhs_contracting_dimensions
+      [TFLITE_STABLEHLO_DOT_GENERAL_PARAMS_MAX_DIMENSION_COUNT];
+  int num_lhs_contracting_dimensions;
+  int64_t rhs_contracting_dimensions
+      [TFLITE_STABLEHLO_DOT_GENERAL_PARAMS_MAX_DIMENSION_COUNT];
+  int num_rhs_contracting_dimensions;
+  int num_precision_configs;
+  uint32_t
+      precision_config[2];
+} TfLiteStablehloDotGeneralParams;
 
 typedef struct {
   // See the stablehlo spec for the explanation of the attributes:

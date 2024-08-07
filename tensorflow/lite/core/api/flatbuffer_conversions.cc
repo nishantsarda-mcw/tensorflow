@@ -925,6 +925,10 @@ TfLiteStatus ParseOpDataTfLite(const Operator* op, BuiltinOperator op_type,
       return ParseStablehloComposite(op, error_reporter, allocator,
                                      builtin_data);
     }
+    case BuiltinOperator_STABLEHLO_DOT_GENERAL: {
+      return ParseStablehloDotGeneral(op, error_reporter, allocator,
+                                      builtin_data);
+    }
     // TODO: skip param parsing for now since ops below don't have kernels
     case BuiltinOperator_STABLEHLO_SLICE:
     case BuiltinOperator_STABLEHLO_BROADCAST_IN_DIM:
@@ -959,7 +963,6 @@ TfLiteStatus ParseOpDataTfLite(const Operator* op, BuiltinOperator op_type,
     case BuiltinOperator_STABLEHLO_IOTA:
     case BuiltinOperator_STABLEHLO_COMPARE:
     case BuiltinOperator_STABLEHLO_CONVERT:
-    case BuiltinOperator_STABLEHLO_DOT_GENERAL:
     case BuiltinOperator_STABLEHLO_SORT:
     case BuiltinOperator_STABLEHLO_WHILE:
     case BuiltinOperator_STABLEHLO_TRANSPOSE:
@@ -2272,6 +2275,66 @@ TfLiteStatus ParseStablehloRngBitGenerator(const Operator* op,
     // better understand the ramifications of changing the legacy behavior.
   }
 
+  *builtin_data = params.release();
+  return kTfLiteOk;
+}
+
+TfLiteStatus ParseStablehloDotGeneral(const Operator* op,
+                                      ErrorReporter* error_reporter,
+                                      BuiltinDataAllocator* allocator,
+                                      void** builtin_data) {
+  CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
+
+  SafeBuiltinDataAllocator safe_allocator(allocator);
+  auto params = safe_allocator.Allocate<TfLiteStablehloDotGeneralParams>();
+  const StablehloDotGeneralOptions* schema_params =
+      op->builtin_options_2_as_StablehloDotGeneralOptions();
+
+  if (!schema_params) {
+    TF_LITE_REPORT_ERROR(
+        error_reporter,
+        "Could not get 'stablehlo.dot_general' operation parameters.");
+    return kTfLiteError;
+  }
+  auto LoadAttr =
+      [&error_reporter](
+          int64_t* params_array, const size_t params_array_size_bytes,
+          const flatbuffers::Vector<int64_t>* const flatbuffer_vector,
+          const char* const attr_name) -> TfLiteStatus {
+    TfLiteStatus status = FlatBufferIntVectorToArray(
+        params_array_size_bytes, flatbuffer_vector, params_array,
+        error_reporter, "stablehlo.dot_general");
+    if (status != kTfLiteOk) {
+      TF_LITE_REPORT_ERROR(error_reporter, "Check the '%s' attribute.",
+                           attr_name);
+    }
+    return status;
+  };
+
+  TF_LITE_ENSURE_STATUS(LoadAttr(
+      params->lhs_batching_dimensions, sizeof(params->lhs_batching_dimensions),
+      schema_params->lhs_batching_dimensions(), "lhs_batching_dimensions"));
+  TF_LITE_ENSURE_STATUS(LoadAttr(
+      params->rhs_batching_dimensions, sizeof(params->rhs_batching_dimensions),
+      schema_params->rhs_batching_dimensions(), "rhs_batching_dimensions"));
+  TF_LITE_ENSURE_STATUS(LoadAttr(params->lhs_contracting_dimensions,
+                                 sizeof(params->lhs_contracting_dimensions),
+                                 schema_params->lhs_contracting_dimensions(),
+                                 "lhs_contracting_dimensions"));
+  TF_LITE_ENSURE_STATUS(LoadAttr(params->rhs_contracting_dimensions,
+                                 sizeof(params->rhs_contracting_dimensions),
+                                 schema_params->rhs_contracting_dimensions(),
+                                 "rhs_contracting_dimensions"));
+
+  params->num_precision_configs = schema_params->precision_config()->size();
+  params->num_lhs_batching_dimensions =
+      schema_params->lhs_batching_dimensions()->size();
+  params->num_rhs_batching_dimensions =
+      schema_params->rhs_batching_dimensions()->size();
+  params->num_lhs_contracting_dimensions =
+      schema_params->lhs_contracting_dimensions()->size();
+  params->num_rhs_contracting_dimensions =
+      schema_params->rhs_contracting_dimensions()->size();
   *builtin_data = params.release();
   return kTfLiteOk;
 }
