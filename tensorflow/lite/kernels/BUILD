@@ -767,6 +767,7 @@ BUILTIN_KERNEL_SRCS = [
     "stablehlo_gather.cc",
     "stablehlo_add.cc",
     "stablehlo_composite.cc",
+    "stablehlo_dot_general.cc",
     "stablehlo_multiply.cc",
     "stablehlo_pad.cc",
     "stablehlo_reduce_window.cc",
@@ -3233,6 +3234,20 @@ cc_test(
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "stablehlo_dot_general_test",
+    size = "small",
+    srcs = ["stablehlo_dot_general_test.cc"],
+    deps = [
+        ":test_main",
+        ":test_util",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
     ],
 )
 
