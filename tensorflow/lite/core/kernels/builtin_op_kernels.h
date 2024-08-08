@@ -297,9 +297,7 @@ TfLiteRegistration* Register_STABLEHLO_PAD();
 TfLiteRegistration*
 Register_STABLEHLO_IOTA();  // WARNING: not implemented, using this
                             // op will crash the runtime
-TfLiteRegistration*
-Register_STABLEHLO_DOT_GENERAL();  // WARNING: not implemented, using this
-                                   // op will crash the runtime
+TfLiteRegistration* Register_STABLEHLO_DOT_GENERAL();
 
 TfLiteRegistration* Register_STABLEHLO_REDUCE_WINDOW();
 
