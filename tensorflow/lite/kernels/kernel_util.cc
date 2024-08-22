@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <complex>
+#include <iostream>
 #include <limits>
 #include <memory>
 
@@ -196,6 +197,107 @@ TfLiteStatus GetIntermediatesSafe(const TfLiteContext* context,
 }
 #endif  // TF_LITE_STATIC_MEMORY
 
+TfLiteStatus PopulateDotGeneralQuantizationParams(
+    TfLiteContext* context, const TfLiteTensor* input,
+    const TfLiteTensor* filter, TfLiteTensor* output, int32_t* multiplier,
+    int* shift, int32_t* output_activation_min, int32_t* output_activation_max,
+    int32_t* per_channel_multiplier, int32_t* per_channel_shift,
+    int num_channels) {
+  TF_LITE_ENSURE_EQ(context, input->quantization.type,
+                    kTfLiteAffineQuantization);
+  TF_LITE_ENSURE_EQ(context, filter->quantization.type,
+                    kTfLiteAffineQuantization);
+  TF_LITE_ENSURE_EQ(context, output->quantization.type,
+                    kTfLiteAffineQuantization);
+
+  // Check data type.
+  const auto* affine_quantization =
+      reinterpret_cast<TfLiteAffineQuantization*>(filter->quantization.params);
+  const auto* output_affine_quantization =
+      reinterpret_cast<TfLiteAffineQuantization*>(output->quantization.params);
+
+  TF_LITE_ENSURE(context, affine_quantization);
+  TF_LITE_ENSURE(context, affine_quantization->scale);
+  const bool is_per_channel = affine_quantization->scale->size > 1;
+  const bool is_per_channel_output =
+      output_affine_quantization->scale->size > 1;
+
+  if (is_per_channel) {
+    //  Currently only Int8/Int16 is supported for per channel quantization.
+    TF_LITE_ENSURE(context,
+                   input->type == kTfLiteInt8 || input->type == kTfLiteInt16);
+    TF_LITE_ENSURE(context,
+                   filter->type == kTfLiteInt8 || filter->type == kTfLiteInt4);
+    TF_LITE_ENSURE_EQ(context, affine_quantization->scale->size, num_channels);
+    TF_LITE_ENSURE_EQ(
+        context, num_channels,
+        filter->dims->data[affine_quantization->quantized_dimension]);
+  }
+  if (is_per_channel_output) {
+    //  Currently only Int8/Int16 is supported for per channel quantization.
+    TF_LITE_ENSURE(context,
+                   input->type == kTfLiteInt8 || input->type == kTfLiteInt16);
+    TF_LITE_ENSURE(context,
+                   filter->type == kTfLiteInt8 || filter->type == kTfLiteInt4);
+    TF_LITE_ENSURE_EQ(context, output_affine_quantization->scale->size,
+                      num_channels);
+    TF_LITE_ENSURE_EQ(
+        context, num_channels,
+        output->dims->data[output_affine_quantization->quantized_dimension]);
+  }
+
+  // Populate multiplier and shift using affine quantization.
+  const float input_scale = input->params.scale;
+  const float* filter_scales = affine_quantization->scale->data;
+  const float* output_scales = output_affine_quantization->scale->data;
+
+  for (int i = 0; i < num_channels; ++i) {
+    // If per-tensor quantization parameter is specified, broadcast it along the
+    // quantization dimension (channels_out).
+    const float scale = is_per_channel ? filter_scales[i] : filter_scales[0];
+    const double filter_scale = static_cast<double>(scale);
+    const double output_scale =
+        is_per_channel_output ? output_scales[i] : output_scales[0];
+    const double effective_output_scale = static_cast<double>(input_scale) *
+                                          filter_scale /
+                                          static_cast<double>(output_scale);
+
+    int32_t significand;
+    int channel_shift;
+    QuantizeMultiplier(effective_output_scale, &significand, &channel_shift);
+    per_channel_multiplier[i] = significand;
+    per_channel_shift[i] = channel_shift;
+  }
+
+  // Populate scalar quantization parameters.
+  // This check on legacy quantization parameters is kept only for backward
+  // compatibility.
+  if (input->type == kTfLiteUInt8) {
+    // Check bias scale == input scale * filter scale.
+    double real_multiplier = 0.0;
+    const TfLiteTensor* bias = nullptr;
+    TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
+        context, input, filter, bias, output, &real_multiplier));
+    int exponent;
+    // Populate quantization parameters with multiplier and shift.
+    QuantizeMultiplier(real_multiplier, multiplier, &exponent);
+    *shift = -exponent;
+  }
+  if (input->type == kTfLiteInt8 || input->type == kTfLiteInt16) {
+    if (output->type == kTfLiteUInt8) {
+      *output_activation_min = std::numeric_limits<uint8_t>::min();
+      *output_activation_max = std::numeric_limits<uint8_t>::max();
+    } else if (output->type == kTfLiteInt8) {
+      *output_activation_min = std::numeric_limits<int8_t>::min();
+      *output_activation_max = std::numeric_limits<int8_t>::max();
+    } else if (output->type == kTfLiteInt16) {
+      *output_activation_min = std::numeric_limits<int16_t>::min();
+      *output_activation_max = std::numeric_limits<int16_t>::max();
+    }
+  }
+  return kTfLiteOk;
+}
+
 // Per-axis
 TfLiteStatus PopulateConvolutionQuantizationParams(
     TfLiteContext* context, const TfLiteTensor* input,
@@ -250,6 +352,7 @@ TfLiteStatus PopulateConvolutionQuantizationParams(
   // Populate multiplier and shift using affine quantization.
   const float input_scale = input->params.scale;
   const float output_scale = output->params.scale;
+  std::cout << "output conv scale = " << output_scale << std::endl;
   const float* filter_scales = affine_quantization->scale->data;
   for (int i = 0; i < num_channels; ++i) {
     // If per-tensor quantization parameter is specified, broadcast it along the
