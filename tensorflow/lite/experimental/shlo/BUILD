@@ -48,6 +48,7 @@ cc_test(
     deps = [
         ":data_type",
         ":tensor",
+        ":tensor_with_data",
         "@com_google_googletest//:gtest_main",
     ],
 )
